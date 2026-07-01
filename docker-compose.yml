@@ -1,21 +1,20 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:15-alpine
     container_name: colacode-postgres
     environment:
-      POSTGRES_USER: colacode_user
-      POSTGRES_PASSWORD: colacode_password
-      POSTGRES_DB: colacode_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT}:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      # Mount the initialization script to run on first startup
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d   # runs init.sql on first start
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U colacode_user -d colacode_db"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
       timeout: 5s
       retries: 5
 
@@ -23,15 +22,16 @@ services:
     image: redis:7-alpine
     container_name: colacode-redis
     ports:
-      - "6379:6379"
-    # Running purely in-memory for fast pub/sub. Persistence is disabled.
-    command: ["redis-server", "--appendonly", "no", "--save", ""]
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis_data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
 
 volumes:
-  pgdata:
+  postgres_data:
+  redis_data:
