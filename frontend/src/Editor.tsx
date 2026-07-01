@@ -3,77 +3,104 @@ import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { MonacoBinding } from 'y-monaco';
 import * as monaco from 'monaco-editor';
-import { editor } from 'monaco-editor';
+import './y-monaco.css';
 
 interface EditorProps {
   room: string;
   username: string;
 }
 
-// Generate a random color for each user
+// Generate a distinct hex color for each user
 function getColorForUser(username: string): string {
   let hash = 0;
   for (let i = 0; i < username.length; i++) {
     hash = username.charCodeAt(i) + ((hash << 5) - hash);
   }
   const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 80%, 60%)`;
+  // Use a fixed saturation and lightness that work well on dark backgrounds
+  return `hsl(${hue}, 80%, 65%)`;
 }
 
 const Editor: React.FC<EditorProps> = ({ room, username }) => {
-  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const providerRef = useRef<WebsocketProvider | null>(null);
-  const docRef = useRef<Y.Doc | null>(null);
+  const userColor = getColorForUser(username);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // 1. Create Yjs document
+    // 1. Yjs document
     const doc = new Y.Doc();
-    docRef.current = doc;
 
-    // 2. Create WebSocket provider
-    // Use the WebSocket URL with room parameter
+    // 2. WebSocket provider
     const provider = new WebsocketProvider('ws://localhost:1234', room, doc);
-    providerRef.current = provider;
 
-    // 3. Set up awareness
+    // 3. Awareness
     const awareness = provider.awareness;
     awareness.setLocalState({
       user: {
         name: username,
-        color: getColorForUser(username),
+        color: userColor,
       },
     });
 
-    // 4. Create Monaco editor instance
-    const editorInstance = monaco.editor.create(document.getElementById('editor-container')!, {
+    // Debug: log awareness changes
+    awareness.on('change', () => {
+      console.log('Awareness states:', awareness.getStates());
+    });
+
+    // 4. Monaco editor
+    const editorInstance = monaco.editor.create(containerRef.current, {
       value: '',
       language: 'javascript',
       theme: 'vs-dark',
       automaticLayout: true,
     });
-    editorRef.current = editorInstance;
 
-    // 5. Bind Monaco to Yjs
-    const monacoBinding = new MonacoBinding(
-      doc.getText('monaco'), // the shared text type
+    // 5. Yjs ↔ Monaco binding
+    const binding = new MonacoBinding(
+      doc.getText('monaco'),
       editorInstance.getModel()!,
-      new Set([editorInstance]), // editor instances to sync
+      new Set([editorInstance]),
       awareness
     );
 
-    // 6. Cleanup
+    // ---- Force cursor colors after a short delay (fallback) ----
+    // This sets the inline border-color if the binding didn't.
+    const applyColors = () => {
+      const heads = document.querySelectorAll('.yRemoteSelectionHead');
+      heads.forEach((el) => {
+        const htmlEl = el as HTMLElement;
+        const clientId = htmlEl.dataset.clientId;
+        if (clientId) {
+          const state = awareness.getStates().get(parseInt(clientId, 10));
+          if (state?.user?.color && !htmlEl.style.borderColor) {
+            htmlEl.style.borderColor = state.user.color;
+          }
+        }
+      });
+    };
+
+    // Run after a short delay to let the binding create elements
+    const timeoutId = setTimeout(applyColors, 100);
+
+    // Also watch for new elements (new users joining) with MutationObserver
+    const observer = new MutationObserver(() => {
+      applyColors();
+    });
+    observer.observe(containerRef.current, { childList: true, subtree: true });
+
+    // Cleanup
     return () => {
-      monacoBinding.destroy();
+      clearTimeout(timeoutId);
+      observer.disconnect();
+      binding.destroy();
       provider.destroy();
       doc.destroy();
       editorInstance.dispose();
     };
-  }, [room, username]);
+  }, [room, username, userColor]);
 
-  return <div id="editor-container" ref={containerRef} className="w-full h-full" />;
+  return <div ref={containerRef} className="w-full h-full" />;
 };
 
 export default Editor;

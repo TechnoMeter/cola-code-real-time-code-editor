@@ -63,14 +63,14 @@ wss.on('connection', (ws, req) => {
             client.send(data);
           }
         }
-      } else if (messageType === 1) {
-        // AWARENESS – forward to all other clients
-        for (const client of clients) {
-          if (client !== ws && client.readyState === WebSocket.OPEN) {
-            client.send(data);
-          }
-        }
-      } else {
+} else if (messageType === 1) {
+  console.log(`[${roomName}] Awareness message received, forwarding to ${clients.size - 1} others`);
+  for (const client of clients) {
+    if (client !== ws && client.readyState === WebSocket.OPEN) {
+      client.send(data);
+    }
+  }
+} else {
         console.warn(`[${roomName}] Unknown message type: ${messageType}`);
       }
     } catch (err) {
