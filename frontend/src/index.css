@@ -1,0 +1,62 @@
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-glass-light: rgba(232, 242, 254, 0.75);
+  --color-glass-dark: rgba(10, 25, 47, 0.75);
+  --color-border-light: rgba(186, 230, 253, 0.45);
+  --color-border-dark: rgba(59, 130, 246, 0.15);
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  overflow: hidden;
+}
+
+.font-handwritten {
+  font-family: 'Caveat', cursive;
+}
+
+.glass-panel {
+  backdrop-filter: blur(24px) saturate(110%);
+  -webkit-backdrop-filter: blur(24px) saturate(110%);
+  @apply bg-glass-light dark:bg-glass-dark border border-border-light dark:border-border-dark shadow-md dark:shadow-2xl transition-all duration-300;
+}
+
+/* ==========================================================================
+   NATIVE COLLABORATIVE CURSORS & LABELS OVERRIDES (y-monaco)
+   ========================================================================== */
+
+.yRemoteSelection {
+  transition: background-color 0.2s ease;
+}
+
+.yRemoteSelectionHead {
+  position: absolute;
+  height: 100%;
+  box-sizing: border-box;
+  z-index: 50;
+}
+
+.yRemoteSelectionHead::after {
+  position: absolute !important;
+  top: -14px !important;
+  left: -2px !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  font-family: 'Inter', sans-serif !important;
+  color: #ffffff !important;
+  padding: 0px 5px !important;
+  border-radius: 2px 4px 4px 0px !important;
+  white-space: nowrap !important;
+  line-height: 12px !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25) !important;
+  
+  /* Hard visibility overrides matching Google Docs behavior */
+  opacity: 1 !important;
+  visibility: visible !important;
+  display: block !important;
+  transform: none !important;
+  transition: none !important;
+}

@@ -1,0 +1,28 @@
+services:
+  redis:
+    image: redis:7.0-alpine
+    container_name: colacode-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redisdata:/data
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: colacode-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: colacode
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+
+volumes:
+  redisdata:
+  pgdata:

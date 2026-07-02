@@ -1,0 +1,30 @@
+{
+  "name": "backend-sync",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "ioredis": "^5.11.1",
+    "lib0": "^0.2.117",
+    "pg": "^8.22.0",
+    "ws": "^8.21.0",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.31"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "@types/pg": "^8.20.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
