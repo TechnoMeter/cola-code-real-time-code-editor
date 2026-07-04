@@ -35,6 +35,7 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
       automaticLayout: true,
       scrollbar: { useShadows: false, verticalHasArrows: false },
       padding: { top: 16 },
+      contextmenu: false,
     });
     editorRef.current = editor;
 

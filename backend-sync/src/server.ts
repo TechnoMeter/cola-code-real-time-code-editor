@@ -71,7 +71,6 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
     doc = new WSSharedDoc(docName);
     docs.set(docName, doc);
 
-    // Track client IDs per connection natively using the transaction origin parameters
     doc.awareness.on('update', ({ added, updated }: any, origin: any) => {
       const controlled = connControlledIds.get(origin);
       if (controlled) {
@@ -126,19 +125,28 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
 
   ws.on('message', (message: Buffer) => {
     if (!doc) return;
-    const decoder = decoding.createDecoder(new Uint8Array(message));
-    const messageType = decoding.readVarUint(decoder);
     
-    if (messageType === 0) {
-      const encoder = encoding.createEncoder();
-      encoding.writeVarUint(encoder, 0);
-      sync.readSyncMessage(decoder, encoder, doc, ws);
-      if (encoding.length(encoder) > 1) {
-        ws.send(encoding.toUint8Array(encoder));
+    // PRODUCTION HARDENING: Wrap the protocol processing loop in a defensive boundary
+    try {
+      if (message.length === 0) return; // Drop empty keep-alive frames immediately
+
+      const decoder = decoding.createDecoder(new Uint8Array(message));
+      const messageType = decoding.readVarUint(decoder);
+      
+      if (messageType === 0) {
+        const encoder = encoding.createEncoder();
+        encoding.writeVarUint(encoder, 0);
+        sync.readSyncMessage(decoder, encoder, doc, ws);
+        if (encoding.length(encoder) > 1) {
+          ws.send(encoding.toUint8Array(encoder));
+        }
+      } else if (messageType === 1) {
+        const awarenessUpdate = decoding.readVarUint8Array(decoder);
+        awarenessProtocol.applyAwarenessUpdate(doc.awareness, awarenessUpdate, ws);
       }
-    } else if (messageType === 1) {
-      const awarenessUpdate = decoding.readVarUint8Array(decoder);
-      awarenessProtocol.applyAwarenessUpdate(doc.awareness, awarenessUpdate, ws);
+    } catch (error) {
+      // Catch exceptions from malformed payloads and preserve system uptime
+      console.warn(`[Gateway Warning] Dropped malformed protocol frame from client:`, error);
     }
   });
 
@@ -146,7 +154,6 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
     if (!doc) return;
     doc.conns.delete(ws);
     
-    // Instantly evict all client IDs owned by this connection to eliminate session clones
     const controlled = connControlledIds.get(ws);
     if (controlled) {
       awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlled), 'local-eviction');
