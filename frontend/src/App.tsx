@@ -193,16 +193,16 @@ export default function App() {
           const firstResult = result[0];
           const columns = firstResult.columns;
           const values = firstResult.values;
-          output = columns.join('\t') + '\n' + values.map(row => row.join('\t')).join('\n');
-          tableData = values.map(row => {
+          output = columns.join('\t') + '\n' + values.map((row: any[]) => row.join('\t')).join('\n');
+          tableData = values.map((row: any[]) => {
             const obj: any = {};
-            columns.forEach((col, idx) => { obj[col] = row[idx]; });
+            columns.forEach((col: string, idx: number) => { obj[col] = row[idx]; });
             return obj;
           });
         } else {
           output = 'Query executed successfully (no results).';
         }
-        resolve({ output, tableData });
+        resolve({ output, tableData: tableData || undefined });
       } catch (err: any) {
         reject(new Error(err.message));
       }
@@ -226,7 +226,6 @@ export default function App() {
       switch (language) {
         case 'javascript':
         case 'typescript': {
-          // For TS we run as JS (types are ignored). For full TS support, include the TypeScript compiler.
           output = await runJavaScript(code);
           break;
         }

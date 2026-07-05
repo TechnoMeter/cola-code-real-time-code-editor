@@ -3,6 +3,7 @@ import websockets
 import y_py as Y
 import re
 import logging
+import os  # <-- added for environment variable
 from langchain_core.messages import HumanMessage
 from .agent import agent_engine
 
@@ -50,7 +51,7 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
             yjs_marker_idx = utf16_len(current_text[:py_marker_idx])
             yjs_marker_len = utf16_len(marker_text)
 
-            # CRITICAL FIX 2: Snapshot the state vector BEFORE making changes
+            # Snapshot the state vector BEFORE making changes
             sv_before = Y.encode_state_vector(doc)
 
             with doc.begin_transaction() as tx:
@@ -73,7 +74,9 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
         logger.error(f"[AI Worker-{room_id}] Background generation task failed: {e}")
 
 async def listen_and_sync(room_id: str):
-    uri = f"ws://127.0.0.1:3000/{room_id}"
+    # Use environment variable or default to internal Docker service name
+    gateway_url = os.getenv("SYNC_GATEWAY_URL", "ws://backend-sync:3000")
+    uri = f"{gateway_url}/{room_id}"
     doc = Y.YDoc()
     text = doc.get_text("monaco-content")
     processing_prompt = False
@@ -89,7 +92,8 @@ async def listen_and_sync(room_id: str):
             async with websockets.connect(uri) as websocket:
                 retry_count = 0 
                 
-                init_handshake = bytearray([0, 0, 1, 0])
+                # Send a syncStep1 message to initiate the Yjs sync protocol
+                init_handshake = bytearray([0, 0, 1, 0])  # messageSync, syncStep1, length=1, data=0
                 await websocket.send(init_handshake)
                 logger.info(f"[AI Worker-{room_id}] Wire handshake dispatched successfully.")
 
@@ -97,7 +101,7 @@ async def listen_and_sync(room_id: str):
                     if not isinstance(message, bytes) or len(message) < 2:
                         continue
                     
-                    # CRITICAL FIX 1: Exhaustive buffer reading loop prevents dropped packets
+                    # Exhaustive buffer reading loop
                     try:
                         offset = 0
                         message_length = len(message)
@@ -108,10 +112,11 @@ async def listen_and_sync(room_id: str):
                             if msg_type == 0:  # messageSync
                                 sync_msg_type, offset = read_varuint(message, offset)
                                 
-                                if sync_msg_type == 0: # syncStep1
+                                if sync_msg_type == 0: # syncStep1 from server
                                     length, offset = read_varuint(message, offset)
                                     remote_state_vector = message[offset:offset + length]
                                     
+                                    # Respond with syncStep2 (our doc is empty, but we send our state)
                                     local_update = Y.encode_state_as_update(doc, bytes(remote_state_vector))
                                     reply = bytearray([0, 1]) # 0: messageSync, 1: syncStep2
                                     reply.extend(encode_varuint(len(local_update)))
@@ -123,11 +128,11 @@ async def listen_and_sync(room_id: str):
                                     update_data = message[offset:offset + length]
                                     Y.apply_update(doc, bytes(update_data))
                                     
-                            elif msg_type == 1:  # messageAwareness (Cursor Tracking)
+                            elif msg_type == 1:  # messageAwareness (Cursor Tracking) – skip
                                 length, offset = read_varuint(message, offset)
-                                offset += length # Safe skip
+                                offset += length
                                 
-                            elif msg_type == 2 or msg_type == 3: # Auth or Query
+                            elif msg_type == 2 or msg_type == 3: # Auth or Query – skip
                                 length, offset = read_varuint(message, offset)
                                 offset += length
                                 
