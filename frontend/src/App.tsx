@@ -6,7 +6,7 @@ import { MonacoBinding } from 'y-monaco';
 import {
   Sun, Moon, Terminal, Users, LogOut, ArrowRight, Menu, X,
   Download, HelpCircle, Play, ChevronDown, Loader2,
-  Sparkles, Code2, Zap, BookOpen, User
+  Sparkles, Code2, Zap, BookOpen, User, Send
 } from 'lucide-react';
 
 // --- Type Declarations ---
@@ -59,7 +59,6 @@ function useColaCode(roomId: string, username: string) {
   useEffect(() => {
     if (!roomId || !username) return;
 
-    // Use environment variable or default to local sync gateway
     const wsUrl = import.meta.env?.VITE_WS_URL || 'ws://localhost:3000';
 
     const docInstance = new Y.Doc();
@@ -107,16 +106,16 @@ interface EditorContainerProps {
   ydoc: Y.Doc | null;
   provider: WebsocketProvider | null;
   theme: 'vs-dark' | 'vs-light';
+  onEditorReady?: (editor: monaco.editor.IStandaloneCodeEditor) => void;
 }
 
-function EditorContainer({ ydoc, provider, theme }: EditorContainerProps) {
+function EditorContainer({ ydoc, provider, theme, onEditorReady }: EditorContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
   useEffect(() => {
     if (!containerRef.current || !ydoc || !provider) return;
 
-    // Inject Yjs Native Cursor Styles dynamically
     const styleTag = document.createElement('style');
     styleTag.id = 'yjs-native-cursor-styles';
     document.head.appendChild(styleTag);
@@ -136,6 +135,7 @@ function EditorContainer({ ydoc, provider, theme }: EditorContainerProps) {
       roundedSelection: false,
     });
     editorRef.current = editor;
+    if (onEditorReady) onEditorReady(editor);
 
     setTimeout(() => editor.layout(), 50);
     const yText = ydoc.getText('monaco-content');
@@ -204,11 +204,10 @@ function EditorContainer({ ydoc, provider, theme }: EditorContainerProps) {
     if (editorRef.current) monaco.editor.setTheme(theme);
   }, [theme]);
 
-  // Make the container transparent so Monaco's base colors look solid against the glass UI
   return <div ref={containerRef} className="w-full h-full rounded-xl overflow-hidden bg-transparent" />;
 }
 
-// --- Ambient Background Component for Aero Glassmorphism ---
+// --- Ambient Background Component ---
 function AmbientBackground() {
   return (
     <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-slate-950 dark:to-slate-900">
@@ -231,6 +230,10 @@ export default function App() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
 
+  // AI Prompt Modal State
+  const [showPromptModal, setShowPromptModal] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+
   // Execution State
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [outputLogs, setOutputLogs] = useState<string[]>([]);
@@ -240,6 +243,9 @@ export default function App() {
   const [pyodideReady, setPyodideReady] = useState(false);
   const [sqlJsReady, setSqlJsReady] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
+
+  // Editor instance ref (for AI insertion)
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
   const { ydoc, provider, activeUsers } = useColaCode(activeRoom, activeUser);
 
@@ -281,7 +287,7 @@ export default function App() {
     if (sessionRoom.trim() && sessionUser.trim()) {
       setActiveRoom(sessionRoom.trim().toLowerCase());
       setActiveUser(sessionUser.trim());
-      setShowGuide(true); // Automatically show Readme on enter
+      setShowGuide(true);
     }
   };
 
@@ -307,7 +313,33 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  // Execution Logic
+  // --- AI Prompt Handler ---
+  const handleAIPrompt = () => {
+    if (!editorRef.current) return;
+    const prompt = aiPrompt.trim();
+    if (!prompt) return;
+
+    // Insert the macro at the current cursor position
+    const editor = editorRef.current;
+    const position = editor.getPosition();
+    if (!position) return;
+
+    const macro = `/* @AI ${prompt} */`;
+    editor.executeEdits('ai-prompt', [{
+      range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
+      text: macro,
+    }]);
+
+    // Move cursor after the inserted macro
+    const newPos = new monaco.Position(position.lineNumber, position.column + macro.length);
+    editor.setPosition(newPos);
+    editor.focus();
+
+    setAiPrompt('');
+    setShowPromptModal(false);
+  };
+
+  // Execution Logic (unchanged)
   const runJavaScript = (code: string): Promise<string> => {
     return new Promise((resolve, reject) => {
       const workerBlob = new Blob([`
@@ -408,10 +440,7 @@ export default function App() {
   if (!activeRoom || !activeUser) {
     return (
       <div className="min-h-screen w-full flex relative text-slate-900 dark:text-slate-100 font-sans selection:bg-blue-500/30 transition-colors duration-300">
-        
         <AmbientBackground />
-
-        {/* Left Side: Brand & Value Props (Hidden on Mobile) */}
         <div className="relative z-10 hidden lg:flex flex-col justify-center flex-1 px-16 xl:px-24 bg-white/20 dark:bg-black/10 backdrop-blur-md border-r border-white/40 dark:border-white/10 shadow-[8px_0_32px_rgba(31,38,135,0.05)]">
           <div className="max-w-xl">
             <div className="flex items-center gap-4 text-blue-600 dark:text-blue-400 mb-8">
@@ -420,18 +449,16 @@ export default function App() {
               </div>
               <h1 className="text-4xl font-bold tracking-tight drop-shadow-sm">ColaCode</h1>
             </div>
-            
             <h2 className="text-5xl font-extrabold leading-[1.1] mb-6 text-slate-800 dark:text-white drop-shadow-sm">
               Code together, <br/><span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-500 dark:from-blue-400 dark:to-indigo-300">execute anywhere.</span>
             </h2>
             <p className="text-lg text-slate-700 dark:text-slate-300 mb-10 leading-relaxed font-medium">
               A high-performance, real-time collaborative workspace engineered for modern software teams. Zero server configuration required.
             </p>
-
             <div className="space-y-6">
               {[
                 { icon: Users, title: "Sub-50ms CRDT Sync", desc: "True real-time collaboration with precise cursor tracking." },
-                { icon: Sparkles, title: "AI Copilot Integration", desc: "Type commands in comments to auto-generate context-aware code." },
+                { icon: Sparkles, title: "AI Copilot Integration", desc: "Click the AI button or type /* @AI ... */ to generate code." },
                 { icon: Terminal, title: "Local WASM Execution", desc: "Run Python, Node, and SQL natively in your browser sandbox." }
               ].map((Feature, i) => (
                 <div key={i} className="flex gap-4 items-start p-4 rounded-2xl bg-white/30 dark:bg-white/5 backdrop-blur-md border border-white/40 dark:border-white/10 shadow-sm hover:bg-white/40 dark:hover:bg-white/10 transition-colors">
@@ -448,34 +475,27 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right Side: Login Form */}
         <div className="relative z-10 flex-1 flex items-center justify-center p-6">
           <div className="w-full max-w-md">
-            
-            {/* Mobile Header */}
-<div className="flex lg:hidden flex-col items-center justify-center gap-1 mb-8 text-blue-700 dark:text-blue-400">
-  <div className="flex items-center gap-3">
-    <CodeCoreLogo className="w-10 h-10 drop-shadow-sm" />
-    <h1 className="text-3xl font-bold drop-shadow-sm">ColaCode</h1>
-  </div>
-  <p className="text-sm font-medium text-slate-700 dark:text-slate-300 drop-shadow-sm mt-1 text-center max-w-xs">
-    Real‑time collaborative coding with AI
-  </p>
-  <p className="text-xs font-medium text-slate-600 dark:text-slate-400 text-center">
-    Code together, execute anywhere.
-  </p>
-</div>
+            <div className="flex lg:hidden flex-col items-center justify-center gap-1 mb-8 text-blue-700 dark:text-blue-400">
+              <div className="flex items-center gap-3">
+                <CodeCoreLogo className="w-10 h-10 drop-shadow-sm" />
+                <h1 className="text-3xl font-bold drop-shadow-sm">ColaCode</h1>
+              </div>
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300 drop-shadow-sm mt-1 text-center max-w-xs">
+                Real‑time collaborative coding with AI
+              </p>
+              <p className="text-xs font-medium text-slate-600 dark:text-slate-400 text-center">
+                Code together, execute anywhere.
+              </p>
+            </div>
 
-            {/* Aero Glass Form Container */}
             <div className="bg-white/40 dark:bg-[#0f172a]/60 backdrop-blur-2xl p-8 rounded-3xl border border-white/60 dark:border-white/20 shadow-[0_8px_32px_rgba(31,38,135,0.1)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.4)] relative overflow-hidden">
-              {/* Glass subtle highlight top edge */}
               <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/60 dark:via-white/20 to-transparent"></div>
-
               <div className="mb-8 relative z-10">
                 <h2 className="text-2xl font-bold mb-2 text-slate-900 dark:text-white drop-shadow-sm">Join Workspace</h2>
                 <p className="text-sm text-slate-700 dark:text-slate-300 font-medium">Enter a room ID to sync with your team instantly.</p>
               </div>
-
               <form onSubmit={handleJoinSession} className="space-y-5 relative z-10">
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Room ID</label>
@@ -491,7 +511,6 @@ export default function App() {
                     />
                   </div>
                 </div>
-
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Display Name</label>
                   <div className="relative">
@@ -506,7 +525,6 @@ export default function App() {
                     />
                   </div>
                 </div>
-
                 <button type="submit" className="w-full mt-6 py-3.5 bg-blue-600/90 dark:bg-blue-600/80 hover:bg-blue-600 dark:hover:bg-blue-500 backdrop-blur-md text-white font-bold rounded-xl shadow-[0_4px_15px_rgba(37,99,235,0.3)] dark:shadow-[0_4px_15px_rgba(37,99,235,0.5)] border border-blue-400/50 transition-all flex items-center justify-center gap-2 group">
                   <span>Initialize Connection</span>
                   <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
@@ -522,81 +540,85 @@ export default function App() {
   // --- Render: Main Editor App ---
   return (
     <div className="w-screen h-screen flex flex-col relative text-slate-800 dark:text-slate-200 transition-colors duration-300 font-sans overflow-hidden">
-      
       <AmbientBackground />
 
-      {/* Aero Glass Header */}
-<header className="h-14 flex items-center justify-between px-4 bg-white/50 dark:bg-[#0f172a]/60 backdrop-blur-xl border-b border-white/60 dark:border-white/10 shadow-sm shrink-0 z-20 relative">
-  <div className="absolute top-0 left-0 right-0 h-px bg-white/40 dark:bg-white/5"></div>
-  
-  <div className="flex items-center gap-2 min-w-0">
-    {/* Always show logo + name */}
-    <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400 shrink-0">
-      <CodeCoreLogo className="w-6 h-6 drop-shadow-sm" />
-      <span className="font-bold tracking-tight drop-shadow-sm text-sm sm:text-base whitespace-nowrap">ColaCode</span>
-    </div>
-    <button
-      onClick={() => setIsMobileSidebarOpen(true)}
-      className="p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 md:hidden text-slate-700 dark:text-slate-300 border border-white/40 dark:border-white/10 transition-colors backdrop-blur-md shrink-0"
-    >
-      <Menu size={20} />
-    </button>
-    <div className="flex flex-col min-w-0 ml-1">
-      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Workspace</span>
-      <span className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[100px] sm:max-w-xs drop-shadow-sm">{activeRoom}</span>
-    </div>
-  </div>
+      {/* Header */}
+      <header className="h-14 flex items-center justify-between px-4 bg-white/50 dark:bg-[#0f172a]/60 backdrop-blur-xl border-b border-white/60 dark:border-white/10 shadow-sm shrink-0 z-20 relative">
+        <div className="absolute top-0 left-0 right-0 h-px bg-white/40 dark:bg-white/5"></div>
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400 shrink-0">
+            <CodeCoreLogo className="w-6 h-6 drop-shadow-sm" />
+            <span className="font-bold tracking-tight drop-shadow-sm text-sm sm:text-base whitespace-nowrap">ColaCode</span>
+          </div>
+          <button
+            onClick={() => setIsMobileSidebarOpen(true)}
+            className="p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 md:hidden text-slate-700 dark:text-slate-300 border border-white/40 dark:border-white/10 transition-colors backdrop-blur-md shrink-0"
+          >
+            <Menu size={20} />
+          </button>
+          <div className="flex flex-col min-w-0 ml-1">
+            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Workspace</span>
+            <span className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[100px] sm:max-w-xs drop-shadow-sm">{activeRoom}</span>
+          </div>
+        </div>
 
-  <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-    <select
-      value={language}
-      onChange={(e) => setLanguage(e.target.value)}
-      className="hidden sm:block py-1.5 px-3 rounded-lg bg-white/50 dark:bg-black/30 backdrop-blur-md border border-white/60 dark:border-white/20 text-xs font-bold uppercase tracking-wide focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer text-slate-800 dark:text-slate-200 shadow-inner"
-    >
-      <option value="javascript">JS/Node</option>
-      <option value="typescript">TypeScript</option>
-      <option value="python">Python</option>
-      <option value="sql">SQL</option>
-    </select>
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            className="hidden sm:block py-1.5 px-3 rounded-lg bg-white/50 dark:bg-black/30 backdrop-blur-md border border-white/60 dark:border-white/20 text-xs font-bold uppercase tracking-wide focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer text-slate-800 dark:text-slate-200 shadow-inner"
+          >
+            <option value="javascript">JS/Node</option>
+            <option value="typescript">TypeScript</option>
+            <option value="python">Python</option>
+            <option value="sql">SQL</option>
+          </select>
 
-    <button
-      onClick={handleExecuteCode}
-      disabled={isExecuting || (language === 'python' && !pyodideReady) || (language === 'sql' && !sqlJsReady)}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 dark:bg-emerald-500/30 backdrop-blur-md border border-emerald-400/30 dark:border-emerald-400/20 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/30 dark:hover:bg-emerald-500/40 font-bold text-sm transition-all disabled:opacity-50 shadow-sm"
-    >
-      {isExecuting ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-      <span className="hidden sm:inline">{isExecuting ? 'Running...' : 'Run'}</span>
-    </button>
+          {/* AI Button */}
+          <button
+            onClick={() => setShowPromptModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/20 dark:bg-purple-500/30 backdrop-blur-md border border-purple-400/30 dark:border-purple-400/20 text-purple-800 dark:text-purple-300 hover:bg-purple-500/30 dark:hover:bg-purple-500/40 font-bold text-sm transition-all shadow-sm"
+            title="AI Copilot"
+          >
+            <Sparkles size={16} />
+            <span className="hidden sm:inline">AI</span>
+          </button>
 
-    <div className="w-px h-6 bg-slate-300/50 dark:bg-white/10 mx-1 hidden sm:block"></div>
+          <button
+            onClick={handleExecuteCode}
+            disabled={isExecuting || (language === 'python' && !pyodideReady) || (language === 'sql' && !sqlJsReady)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 dark:bg-emerald-500/30 backdrop-blur-md border border-emerald-400/30 dark:border-emerald-400/20 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/30 dark:hover:bg-emerald-500/40 font-bold text-sm transition-all disabled:opacity-50 shadow-sm"
+          >
+            {isExecuting ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+            <span className="hidden sm:inline">{isExecuting ? 'Running...' : 'Run'}</span>
+          </button>
 
-    <div className="flex items-center gap-1">
-      <button onClick={() => setShowGuide(true)} className="p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent hover:border-white/40 dark:hover:border-white/10 text-slate-700 dark:text-slate-300 transition-all backdrop-blur-md" title="Readme / Help">
-        <HelpCircle size={18} />
-      </button>
-      <button onClick={handleExportCode} className="hidden sm:block p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent hover:border-white/40 dark:hover:border-white/10 text-slate-700 dark:text-slate-300 transition-all backdrop-blur-md" title="Download Code">
-        <Download size={18} />
-      </button>
-      <button onClick={() => setTheme(theme === 'vs-dark' ? 'vs-light' : 'vs-dark')} className="p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent hover:border-white/40 dark:hover:border-white/10 text-slate-700 dark:text-slate-300 transition-all backdrop-blur-md" title="Toggle Theme">
-        {theme === 'vs-dark' ? <Sun size={18} /> : <Moon size={18} />}
-      </button>
-      <button onClick={handleLeaveSession} className="hidden sm:flex items-center gap-2 p-2 ml-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-700 dark:text-red-400 transition-all backdrop-blur-md" title="Leave Session">
-        <LogOut size={18} />
-      </button>
-    </div>
-  </div>
-</header>
+          <div className="w-px h-6 bg-slate-300/50 dark:bg-white/10 mx-1 hidden sm:block"></div>
 
-      {/* Main Layout Area */}
+          <div className="flex items-center gap-1">
+            <button onClick={() => setShowGuide(true)} className="p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent hover:border-white/40 dark:hover:border-white/10 text-slate-700 dark:text-slate-300 transition-all backdrop-blur-md" title="Readme / Help">
+              <HelpCircle size={18} />
+            </button>
+            <button onClick={handleExportCode} className="hidden sm:block p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent hover:border-white/40 dark:hover:border-white/10 text-slate-700 dark:text-slate-300 transition-all backdrop-blur-md" title="Download Code">
+              <Download size={18} />
+            </button>
+            <button onClick={() => setTheme(theme === 'vs-dark' ? 'vs-light' : 'vs-dark')} className="p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent hover:border-white/40 dark:hover:border-white/10 text-slate-700 dark:text-slate-300 transition-all backdrop-blur-md" title="Toggle Theme">
+              {theme === 'vs-dark' ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button onClick={handleLeaveSession} className="hidden sm:flex items-center gap-2 p-2 ml-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-700 dark:text-red-400 transition-all backdrop-blur-md" title="Leave Session">
+              <LogOut size={18} />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Layout */}
       <div className="flex-1 flex overflow-hidden relative z-10">
-        
-        {/* Aero Glass Sidebar */}
         <aside className={`absolute md:relative z-30 h-full w-64 bg-white/40 dark:bg-[#0f172a]/40 backdrop-blur-xl border-r border-white/60 dark:border-white/10 flex flex-col transition-transform duration-300 ease-out shadow-[4px_0_24px_rgba(0,0,0,0.02)] dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)] ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
           <div className="flex items-center justify-between p-4 border-b border-white/40 dark:border-white/10 md:hidden bg-white/20 dark:bg-black/20">
             <span className="font-bold text-slate-900 dark:text-white">Menu</span>
             <button onClick={() => setIsMobileSidebarOpen(false)} className="p-2 text-slate-700 dark:text-slate-300"><X size={20}/></button>
           </div>
-          
           <div className="p-4 flex-1 overflow-y-auto">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 mb-4 flex items-center gap-2 drop-shadow-sm">
               <Users size={14} /> Collaborators ({activeUsers.length})
@@ -610,8 +632,6 @@ export default function App() {
                 </div>
               ))}
             </div>
-
-            {/* Mobile-only actions inside sidebar */}
             <div className="md:hidden mt-8 space-y-4 border-t border-white/40 dark:border-white/10 pt-6">
                <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block mb-2">Language</label>
                <select
@@ -624,7 +644,6 @@ export default function App() {
                 <option value="python">Python</option>
                 <option value="sql">SQL</option>
               </select>
-              
               <button onClick={handleExportCode} className="w-full flex items-center gap-2 p-2.5 rounded-xl bg-white/40 dark:bg-white/5 hover:bg-white/60 dark:hover:bg-white/10 border border-white/50 dark:border-white/10 text-slate-800 dark:text-slate-200 transition-colors backdrop-blur-md shadow-sm">
                 <Download size={18} /> <span className="font-bold text-sm">Download File</span>
               </button>
@@ -635,16 +654,19 @@ export default function App() {
           </div>
         </aside>
 
-        {/* Backdrop for Mobile Sidebar */}
         {isMobileSidebarOpen && (
           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-20 md:hidden" onClick={() => setIsMobileSidebarOpen(false)} />
         )}
 
-        {/* Editor & Terminal Container */}
         <main className="flex-1 flex flex-col min-w-0 bg-white/30 dark:bg-black/20 backdrop-blur-sm">
           <div className={`flex-1 relative transition-all duration-300 ${isTerminalOpen ? 'h-[60%]' : 'h-full'}`}>
             {ydoc && provider ? (
-              <EditorContainer ydoc={ydoc} provider={provider} theme={theme} />
+              <EditorContainer
+                ydoc={ydoc}
+                provider={provider}
+                theme={theme}
+                onEditorReady={(editor) => { editorRef.current = editor; }}
+              />
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-slate-600 dark:text-slate-400 drop-shadow-sm">
                 <Loader2 size={32} className="animate-spin text-blue-600 dark:text-blue-400" />
@@ -653,11 +675,9 @@ export default function App() {
             )}
           </div>
 
-          {/* Frosted Glass Terminal / Output Console */}
           {isTerminalOpen && (
             <div className="h-[40%] min-h-[200px] border-t border-white/30 dark:border-white/10 bg-slate-900/80 dark:bg-[#0f111a]/80 backdrop-blur-2xl flex flex-col z-10 shrink-0 shadow-[0_-8px_30px_rgba(0,0,0,0.15)] relative">
               <div className="absolute top-0 left-0 right-0 h-px bg-white/20"></div>
-              
               <div className="h-10 px-4 bg-black/20 dark:bg-black/40 border-b border-white/10 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Terminal size={14} className="text-blue-300" />
@@ -669,13 +689,11 @@ export default function App() {
               </div>
               <div className="flex-1 p-4 overflow-y-auto font-mono text-[13px] leading-relaxed text-slate-200 bg-transparent selection:bg-blue-500/50">
                 {loadingMessage && <div className="text-yellow-300 flex items-center gap-2 mb-2 bg-yellow-900/30 w-fit px-3 py-1 rounded border border-yellow-500/30 backdrop-blur-md"><Loader2 size={14} className="animate-spin"/> {loadingMessage}</div>}
-                
                 {outputLogs.map((log, i) => (
                   <div key={i} className={`whitespace-pre-wrap ${log.startsWith('ERROR') ? 'text-red-400' : 'text-slate-200'}`}>
                     {log}
                   </div>
                 ))}
-
                 {sqlTableData && sqlTableData.length > 0 && (
                   <div className="mt-4 w-full overflow-x-auto rounded-xl border border-white/10 bg-black/20 backdrop-blur-md shadow-inner">
                     <table className="w-full text-left collapse">
@@ -704,13 +722,54 @@ export default function App() {
         </main>
       </div>
 
-      {/* Prominent Onboarding / Guide Modal (Aero Glass) */}
+      {/* AI Prompt Modal */}
+      {showPromptModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 dark:bg-slate-900/60 backdrop-blur-md p-4 sm:p-6 animate-in fade-in duration-200">
+          <div className="bg-white/70 dark:bg-[#0f172a]/80 backdrop-blur-3xl w-full max-w-lg rounded-[2rem] shadow-[0_16px_64px_rgba(0,0,0,0.2)] dark:shadow-[0_16px_64px_rgba(0,0,0,0.6)] border border-white/60 dark:border-white/20 relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/80 to-transparent"></div>
+            <div className="p-6 sm:p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-2.5 bg-purple-500/20 dark:bg-purple-500/20 rounded-xl text-purple-700 dark:text-purple-400 border border-purple-400/30">
+                  <Sparkles size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">AI Copilot</h3>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">Describe what code you want me to generate.</p>
+                </div>
+              </div>
+              <textarea
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                placeholder="e.g. Write a function to fetch data from an API and display it."
+                className="w-full h-32 p-4 rounded-xl bg-white/50 dark:bg-black/30 backdrop-blur-md border border-white/60 dark:border-white/20 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all font-mono text-sm shadow-inner placeholder-slate-500 dark:placeholder-slate-400 text-slate-900 dark:text-white resize-none"
+                autoFocus
+              />
+              <div className="flex gap-3 mt-6 justify-end">
+                <button
+                  onClick={() => { setShowPromptModal(false); setAiPrompt(''); }}
+                  className="px-6 py-2.5 rounded-xl bg-white/40 dark:bg-white/5 hover:bg-white/60 dark:hover:bg-white/10 border border-white/50 dark:border-white/10 text-slate-700 dark:text-slate-300 font-semibold transition-all backdrop-blur-md"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAIPrompt}
+                  disabled={!aiPrompt.trim()}
+                  className="px-6 py-2.5 rounded-xl bg-purple-600/90 dark:bg-purple-600/80 hover:bg-purple-600 dark:hover:bg-purple-500 backdrop-blur-md text-white font-bold shadow-[0_4px_15px_rgba(147,51,234,0.3)] border border-purple-400/50 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Send size={18} />
+                  Generate
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Guide Modal – updated to mention AI button */}
       {showGuide && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 dark:bg-slate-900/60 backdrop-blur-md p-4 sm:p-6 animate-in fade-in duration-200">
           <div className="bg-white/70 dark:bg-[#0f172a]/80 backdrop-blur-3xl w-full max-w-2xl rounded-[2rem] shadow-[0_16px_64px_rgba(0,0,0,0.2)] dark:shadow-[0_16px_64px_rgba(0,0,0,0.6)] border border-white/60 dark:border-white/20 flex flex-col max-h-[90vh] relative overflow-hidden">
-            
             <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/80 to-transparent"></div>
-
             <div className="p-6 sm:p-10 flex-1 overflow-y-auto">
               <div className="flex items-start justify-between mb-8">
                 <div>
@@ -721,9 +780,7 @@ export default function App() {
                   <CodeCoreLogo className="w-8 h-8 drop-shadow-sm" />
                 </div>
               </div>
-
               <div className="space-y-4">
-                {/* Feature 1 */}
                 <div className="group p-5 rounded-2xl bg-white/40 dark:bg-black/20 backdrop-blur-md border border-white/60 dark:border-white/10 shadow-sm hover:border-blue-400/50 hover:bg-white/50 dark:hover:bg-black/40 transition-all">
                   <div className="flex items-center gap-3 mb-2">
                     <div className="p-2.5 bg-emerald-500/20 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 rounded-xl border border-emerald-400/30">
@@ -736,8 +793,7 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* Feature 2 */}
-                <div className="group p-5 rounded-2xl bg-white/40 dark:bg-black/20 backdrop-blur-md border border-white/60 dark:border-white/10 shadow-sm hover:border-blue-400/50 hover:bg-white/50 dark:hover:bg-black/40 transition-all">
+                <div className="group p-5 rounded-2xl bg-white/40 dark:bg-black/20 backdrop-blur-md border border-white/60 dark:border-white/10 shadow-sm hover:border-purple-400/50 hover:bg-white/50 dark:hover:bg-black/40 transition-all">
                   <div className="flex items-center gap-3 mb-2">
                     <div className="p-2.5 bg-purple-500/20 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400 rounded-xl border border-purple-400/30">
                       <Sparkles size={20} />
@@ -745,11 +801,10 @@ export default function App() {
                     <h3 className="font-bold text-lg text-slate-900 dark:text-white">AI Copilot</h3>
                   </div>
                   <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed pl-14 font-medium">
-                    Type <code className="px-2 py-1 rounded-lg bg-white/60 dark:bg-black/40 border border-white/50 dark:border-white/10 text-slate-800 dark:text-slate-200 font-mono text-xs shadow-inner">/* @AI Create a fetch request */</code>. The integrated AI will read context and stream code directly into your editor view.
+                    Click the <strong className="text-purple-700 dark:text-purple-400">AI</strong> button in the header, type your request, and the copilot will generate code at your cursor. You can also type <code className="px-2 py-1 rounded-lg bg-white/60 dark:bg-black/40 border border-white/50 dark:border-white/10 text-slate-800 dark:text-slate-200 font-mono text-xs shadow-inner">/* @AI Create a fetch request */</code> manually.
                   </p>
                 </div>
 
-                {/* Feature 3 */}
                 <div className="group p-5 rounded-2xl bg-white/40 dark:bg-black/20 backdrop-blur-md border border-white/60 dark:border-white/10 shadow-sm hover:border-blue-400/50 hover:bg-white/50 dark:hover:bg-black/40 transition-all">
                   <div className="flex items-center gap-3 mb-2">
                     <div className="p-2.5 bg-blue-500/20 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 rounded-xl border border-blue-400/30">
@@ -763,7 +818,6 @@ export default function App() {
                 </div>
               </div>
             </div>
-
             <div className="p-6 bg-white/30 dark:bg-black/20 backdrop-blur-md border-t border-white/50 dark:border-white/10 flex justify-end shrink-0">
               <button 
                 onClick={() => setShowGuide(false)}
