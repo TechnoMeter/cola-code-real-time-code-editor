@@ -8,19 +8,11 @@ interface UserAwareness {
   color: string;
 }
 
-// Expanded vivid palette to differentiate collaborative developers
 const PALETTE = [
-  '#3b82f6', // Electric Blue
-  '#10b981', // Emerald Green
-  '#f59e0b', // Vivid Amber
-  '#ec4899', // Deep Pink
-  '#06b6d4', // Bright Cyan
-  '#8b5cf6', // Purple
-  '#f97316', // Orange
-  '#a855f7'  // Violet
+  '#3b82f6', '#10b981', '#f59e0b', '#ec4899',
+  '#06b6d4', '#8b5cf6', '#f97316', '#a855f7'
 ];
 
-// DJB2 String Hashing implementation to eliminate color mapping collisions
 function getVibrantColor(username: string): string {
   let hash = 5381;
   for (let i = 0; i < username.length; i++) {
@@ -38,15 +30,17 @@ export function useColaCode(roomId: string, username: string) {
   useEffect(() => {
     if (!roomId || !username) return;
 
+    // Read WebSocket URL from environment (default to localhost for dev)
+    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:3000';
+
     const docInstance = new Y.Doc();
     const providerInstance = new WebsocketProvider(
-      'ws://localhost:3000',
+      wsUrl,
       roomId,
       docInstance
     );
 
     const assignedColor = getVibrantColor(username);
-    
     providerInstance.awareness.setLocalStateField('user', {
       name: username,
       color: assignedColor,
@@ -55,7 +49,6 @@ export function useColaCode(roomId: string, username: string) {
     const handleAwarenessChange = () => {
       const states = providerInstance.awareness.getStates();
       const users: UserAwareness[] = [];
-      
       states.forEach((state, clientID) => {
         if (state.user) {
           users.push({
@@ -69,7 +62,6 @@ export function useColaCode(roomId: string, username: string) {
     };
 
     providerInstance.awareness.on('change', handleAwarenessChange);
-    
     setYdoc(docInstance);
     setProvider(providerInstance);
 

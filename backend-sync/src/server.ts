@@ -8,6 +8,7 @@ import * as awarenessProtocol from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import { flushDocumentToDB } from './persistence';
+import { createServer } from 'http';
 
 dotenv.config();
 

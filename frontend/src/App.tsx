@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useColaCode } from './hooks/useColaCode';
 import { EditorContainer } from './components/EditorContainer';
-import { Sun, Moon, Terminal, Users, LogOut, ArrowRight, Menu, X, Download, HelpCircle, Play, CheckCircle2, ChevronDown } from 'lucide-react';
+import {
+  Sun, Moon, Terminal, Users, LogOut, ArrowRight, Menu, X,
+  Download, HelpCircle, Play, CheckCircle2, ChevronDown, Loader2
+} from 'lucide-react';
 
 function CodeCoreLogo({ className = "w-8 h-8" }: { className?: string }) {
   return (
@@ -14,6 +17,16 @@ function CodeCoreLogo({ className = "w-8 h-8" }: { className?: string }) {
   );
 }
 
+// Type declarations for CDN‑loaded libraries
+declare global {
+  interface Window {
+    loadPyodide: any;
+    pyodide: any;
+    initSqlJs: any;
+    SQL: any;
+  }
+}
+
 export default function App() {
   const [theme, setTheme] = useState<'vs-dark' | 'vs-light'>('vs-dark');
   const [sessionRoom, setSessionRoom] = useState('');
@@ -22,14 +35,50 @@ export default function App() {
   const [activeUser, setActiveUser] = useState('');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
-  
-  // Execution Terminal & Language States
+
+  // Execution state
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [outputLogs, setOutputLogs] = useState<string[]>([]);
+  const [sqlTableData, setSqlTableData] = useState<any[] | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [language, setLanguage] = useState('javascript');
+  const [pyodideReady, setPyodideReady] = useState(false);
+  const [sqlJsReady, setSqlJsReady] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
 
   const { ydoc, provider, activeUsers } = useColaCode(activeRoom, activeUser);
+
+  // Load Pyodide and SQL.js once
+  useEffect(() => {
+    const loadRuntimes = async () => {
+      if (typeof window.loadPyodide !== 'undefined' && !window.pyodide) {
+        setLoadingMessage('Loading Python runtime...');
+        try {
+          window.pyodide = await window.loadPyodide({
+            indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.1/full/',
+          });
+          setPyodideReady(true);
+        } catch (e) {
+          console.error('Pyodide load failed', e);
+          setOutputLogs(prev => [...prev, 'ERROR: Failed to load Python runtime.']);
+        }
+      }
+      if (typeof window.initSqlJs !== 'undefined' && !window.SQL) {
+        setLoadingMessage('Loading SQL runtime...');
+        try {
+          window.SQL = await window.initSqlJs({
+            locateFile: (file: string) => `https://sql.js.org/dist/${file}`,
+          });
+          setSqlJsReady(true);
+        } catch (e) {
+          console.error('SQL.js load failed', e);
+          setOutputLogs(prev => [...prev, 'ERROR: Failed to load SQL runtime.']);
+        }
+      }
+      setLoadingMessage('');
+    };
+    loadRuntimes();
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -51,6 +100,7 @@ export default function App() {
     setIsMobileSidebarOpen(false);
     setIsTerminalOpen(false);
     setOutputLogs([]);
+    setSqlTableData(null);
   };
 
   const handleExportCode = () => {
@@ -66,49 +116,152 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  // ----- EXECUTION LOGIC (WASM-BASED) -----
+
+  // 1. JavaScript / TypeScript (Web Worker)
+  const runJavaScript = (code: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const workerBlob = new Blob([`
+        self.onmessage = function(e) {
+          const code = e.data;
+          let output = '';
+          const originalLog = console.log;
+          console.log = function(...args) {
+            output += args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') + '\\n';
+          };
+          try {
+            const result = new Function(code)();
+            if (result !== undefined) {
+              output += String(result) + '\\n';
+            }
+            console.log = originalLog;
+            self.postMessage({ type: 'success', output });
+          } catch (err) {
+            console.log = originalLog;
+            self.postMessage({ type: 'error', error: err.message || String(err) });
+          }
+        };
+      `], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(workerBlob);
+      const worker = new Worker(workerUrl);
+      worker.onmessage = (e) => {
+        if (e.data.type === 'success') {
+          resolve(e.data.output);
+        } else {
+          reject(new Error(e.data.error));
+        }
+        worker.terminate();
+        URL.revokeObjectURL(workerUrl);
+      };
+      worker.onerror = (err) => {
+        reject(new Error(err.message));
+        worker.terminate();
+        URL.revokeObjectURL(workerUrl);
+      };
+      worker.postMessage(code);
+    });
+  };
+
+  // 2. Python (Pyodide)
+  const runPython = async (code: string): Promise<string> => {
+    if (!window.pyodide) throw new Error('Python runtime not loaded');
+    window.pyodide.runPython(`
+      import sys
+      from io import StringIO
+      sys.stdout = StringIO()
+    `);
+    try {
+      await window.pyodide.runPythonAsync(code);
+      const output = window.pyodide.runPython('sys.stdout.getvalue()');
+      return output;
+    } catch (err: any) {
+      throw new Error(err.message);
+    }
+  };
+
+  // 3. SQL (SQL.js)
+  const runSQL = (code: string): Promise<{ output: string; tableData?: any[] }> => {
+    return new Promise((resolve, reject) => {
+      if (!window.SQL) reject(new Error('SQL.js not loaded'));
+      try {
+        const db = new window.SQL.Database();
+        // Execute the query (assume a single SELECT statement for simplicity)
+        const result = db.exec(code);
+        let output = '';
+        let tableData: any[] | null = null;
+        if (result && result.length > 0) {
+          const firstResult = result[0];
+          const columns = firstResult.columns;
+          const values = firstResult.values;
+          output = columns.join('\t') + '\n' + values.map(row => row.join('\t')).join('\n');
+          tableData = values.map(row => {
+            const obj: any = {};
+            columns.forEach((col, idx) => { obj[col] = row[idx]; });
+            return obj;
+          });
+        } else {
+          output = 'Query executed successfully (no results).';
+        }
+        resolve({ output, tableData });
+      } catch (err: any) {
+        reject(new Error(err.message));
+      }
+    });
+  };
+
+  // Main execution handler
   const handleExecuteCode = async () => {
     if (!ydoc) return;
     setIsTerminalOpen(true);
     setIsExecuting(true);
-    setOutputLogs([`> Compiling ${language} via Piston Cloud Network...`]);
-    
+    setOutputLogs([]);
+    setSqlTableData(null);
+
     const code = ydoc.getText('monaco-content').toString();
 
-    // Map language selections to exact Piston public API versions
-    const runtimeVersions: Record<string, string> = {
-      javascript: '18.15.0',
-      typescript: '5.0.3',
-      python: '3.10.0'
-    };
-
     try {
-      const response = await fetch('/api/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          language: language,
-          version: runtimeVersions[language],
-          files: [{ content: code }]
-        })
-      });
+      let output = '';
+      let tableData: any[] | null = null;
 
-      if (!response.ok) throw new Error(`Gateway Error: ${response.status}`);
-      const result = await response.json();
+      switch (language) {
+        case 'javascript':
+        case 'typescript': {
+          // For TS we run as JS (types are ignored). For full TS support, include the TypeScript compiler.
+          output = await runJavaScript(code);
+          break;
+        }
+        case 'python': {
+          if (!pyodideReady) {
+            throw new Error('Python runtime is still loading. Please wait.');
+          }
+          output = await runPython(code);
+          break;
+        }
+        case 'sql': {
+          if (!sqlJsReady) {
+            throw new Error('SQL runtime is still loading. Please wait.');
+          }
+          const result = await runSQL(code);
+          output = result.output;
+          tableData = result.tableData || null;
+          break;
+        }
+        default:
+          throw new Error(`Unsupported language: ${language}`);
+      }
 
-      if (result.compile && result.compile.code !== 0) {
-        setOutputLogs(prev => [...prev, `COMPILE ERROR:\n${result.compile.output}`, '> Execution terminated.']);
-      } else if (result.run) {
-        setOutputLogs(prev => [...prev, result.run.output, '> Execution finished.']);
-      } else {
-        setOutputLogs(prev => [...prev, 'ERROR: Malformed compiler response.', '> Execution terminated.']);
+      setOutputLogs(prev => [...prev, output || 'Execution completed (no output).']);
+      if (tableData && tableData.length > 0) {
+        setSqlTableData(tableData);
       }
     } catch (err: any) {
-      setOutputLogs(prev => [...prev, `NETWORK ERROR: ${err.message}`, '> Execution terminated.']);
+      setOutputLogs(prev => [...prev, `ERROR: ${err.message}`]);
     } finally {
       setIsExecuting(false);
     }
   };
-  
+
+  // ---- Login screen ----
   if (!activeRoom || !activeUser) {
     return (
       <div className="w-screen h-screen flex flex-col md:flex-row items-center justify-center bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 text-blue-100 p-4 gap-8">
@@ -124,7 +277,7 @@ export default function App() {
             {[
               "Sub-50ms CRDT state synchronization.",
               "Autonomous AI Copilot via LangGraph & Gemini.",
-              "Multi-language execution sandbox.",
+              "Multi-language execution sandbox (WASM).",
               "Google-Docs style live cursor tracking."
             ].map((feature, i) => (
               <div key={i} className="flex items-start gap-3 text-sm font-medium text-blue-300/90">
@@ -178,9 +331,9 @@ export default function App() {
     );
   }
 
+  // ---- Main editor UI ----
   return (
     <div className="w-screen h-screen flex flex-col bg-gradient-to-br from-sky-100 via-blue-50 to-indigo-100 dark:from-slate-950 dark:via-blue-950 dark:to-slate-950 text-slate-700 dark:text-blue-100 p-2 sm:p-4 gap-2 sm:gap-4 transition-colors duration-300">
-      
       <header className="w-full h-16 glass-panel rounded-2xl flex items-center justify-between px-4 sm:px-6 shrink-0">
         <div className="flex items-center gap-2 sm:gap-3">
           <button
@@ -198,21 +351,26 @@ export default function App() {
             </div>
           </div>
         </div>
-        
+
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Target Architecture Selection */}
-          <select 
-            value={language} 
+          <select
+            value={language}
             onChange={(e) => setLanguage(e.target.value)}
             className="p-1.5 rounded-xl bg-black/10 dark:bg-black/30 border border-blue-300/30 text-xs font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-300 focus:outline-none cursor-pointer hidden sm:block"
           >
             <option value="javascript">JavaScript</option>
             <option value="typescript">TypeScript</option>
             <option value="python">Python</option>
+            <option value="sql">SQL</option>
           </select>
 
-          <button onClick={handleExecuteCode} title={`Run ${language.toUpperCase()}`} className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition-all cursor-pointer">
-            <Play size={16} className={isExecuting ? "animate-pulse" : ""} />
+          <button
+            onClick={handleExecuteCode}
+            disabled={isExecuting || (language === 'python' && !pyodideReady) || (language === 'sql' && !sqlJsReady)}
+            title={`Run ${language.toUpperCase()}`}
+            className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isExecuting ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
           </button>
           <button onClick={handleExportCode} title="Export File" className="p-2 rounded-xl bg-blue-200/40 dark:bg-blue-950/40 hover:bg-blue-200/70 border border-blue-300/20 text-blue-700 dark:text-blue-300 cursor-pointer hidden sm:block">
             <Download size={16} />
@@ -274,9 +432,32 @@ export default function App() {
                 <button onClick={() => setIsTerminalOpen(false)} className="text-slate-500 hover:text-slate-300"><ChevronDown size={14} /></button>
               </div>
               <div className="flex-1 p-4 overflow-y-auto font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
+                {loadingMessage && <div className="text-yellow-400 animate-pulse">{loadingMessage}</div>}
                 {outputLogs.map((log, i) => (
-                  <div key={i} className={`${log.startsWith('ERROR') || log.startsWith('COMPILE') ? 'text-red-400' : ''}`}>{log}</div>
+                  <div key={i} className={log.startsWith('ERROR') ? 'text-red-400' : ''}>{log}</div>
                 ))}
+                {sqlTableData && sqlTableData.length > 0 && (
+                  <div className="mt-2 w-full overflow-auto">
+                    <table className="w-full text-xs border-collapse border border-slate-700">
+                      <thead>
+                        <tr>
+                          {Object.keys(sqlTableData[0]).map((col) => (
+                            <th key={col} className="border border-slate-700 px-2 py-1 text-left text-emerald-300">{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sqlTableData.map((row, idx) => (
+                          <tr key={idx}>
+                            {Object.values(row).map((val, i) => (
+                              <td key={i} className="border border-slate-700 px-2 py-1">{String(val)}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -288,21 +469,18 @@ export default function App() {
           <div className="bg-white dark:bg-slate-900 border border-blue-200 dark:border-slate-700 rounded-3xl p-6 max-w-lg w-full shadow-2xl relative">
             <button onClick={() => setShowGuide(false)} className="absolute top-4 right-4 p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"><X size={20}/></button>
             <h2 className="text-2xl font-bold text-slate-800 dark:text-blue-100 mb-4 flex items-center gap-2"><HelpCircle className="text-blue-500"/> User Guide</h2>
-            
             <div className="space-y-4 text-sm text-slate-600 dark:text-slate-300">
               <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50">
                 <h3 className="font-semibold text-slate-800 dark:text-blue-200 mb-1 flex items-center gap-2"><Users size={16}/> Real-Time Collaboration</h3>
                 <p>Share your Workspace ID with peers. Cursors, nametags, and text synchronize across all connections instantly via CRDT logic.</p>
               </div>
-              
               <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-800/30">
                 <h3 className="font-semibold text-blue-800 dark:text-blue-300 mb-1 flex items-center gap-2"><Terminal size={16}/> AI Copilot</h3>
                 <p>Type <code className="bg-blue-100 dark:bg-blue-950 px-1 py-0.5 rounded font-mono text-blue-600 dark:text-blue-400">/* @AI [your prompt] */</code> anywhere in the editor. The headless bot will read the context, execute a LangGraph task, and stream the generated code character-by-character directly into your view.</p>
               </div>
-
               <div className="bg-emerald-50 dark:bg-emerald-900/10 p-4 rounded-xl border border-emerald-100 dark:border-emerald-800/20">
                 <h3 className="font-semibold text-emerald-800 dark:text-emerald-400 mb-1 flex items-center gap-2"><Play size={16}/> Local Execution</h3>
-                <p>Select your language from the header dropdown and hit the green Play button to compile and execute your current workspace code against a remote Piston engine container.</p>
+                <p>Select your language (JS/TS, Python, SQL) and click the Play button. Code runs entirely in your browser via WebAssembly – no server required.</p>
               </div>
             </div>
           </div>

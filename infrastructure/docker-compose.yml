@@ -1,28 +1,85 @@
 services:
-  redis:
-    image: redis:7.0-alpine
-    container_name: colacode-redis
-    ports:
-      - "6379:6379"
-    restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
-    volumes:
-      - redisdata:/data
-
   postgres:
     image: postgres:15-alpine
     container_name: colacode-postgres
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: colacode
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./infrastructure/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: colacode-redis
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend-sync:
+    build: ./backend-sync
+    container_name: colacode-sync
+    environment:
+      - PORT=3000
+      - PG_USER=${PG_USER}
+      - PG_HOST=postgres
+      - PG_DB=${PG_DB}
+      - PG_PASSWORD=${PG_PASSWORD}
+      - PG_PORT=5432
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend-ai:
+    build: ./backend-ai
+    container_name: colacode-ai
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-gemini-2.0-flash-lite}
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_WS_URL: ${VITE_WS_URL:-ws://backend-sync:3000}
+    container_name: colacode-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend-sync
+      - backend-ai
     restart: unless-stopped
 
 volumes:
-  redisdata:
   pgdata:
+  redisdata:
