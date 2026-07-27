@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from typing import TypedDict, Annotated, Sequence
 from dotenv import load_dotenv
@@ -7,22 +8,17 @@ from langgraph.graph import StateGraph, END, add_messages
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
-
 logger = logging.getLogger(__name__)
 
-# Bind the custom key configuration directly into the expected Google API wrapper environment
 os.environ["GOOGLE_API_KEY"] = os.getenv("LLM_API_KEY", "")
 
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
-# Initialize the LLM using your previous project's parameters and thinking profiles
 llm = ChatGoogleGenerativeAI(
-    model=os.getenv("LLM_MODEL", "gemini-3.1-flash-lite"),
-    streaming=True,
-    model_kwargs={
-        "thinking_config": {"thinking_level": "HIGH"}
-    }
+    model=os.getenv("LLM_MODEL", "gemini-2.0-flash-lite"),
+    streaming=False,
+    temperature=0.2
 )
 
 SYSTEM_PROMPT = """You are the ColaCode AI Copilot, an expert full-stack engineer pair-programming with the user.
@@ -34,13 +30,24 @@ CRITICAL INSTRUCTIONS:
 3. Do NOT provide inline conversational commentary, introductory summaries, or markdown notes.
 4. Produce raw code characters only."""
 
+def sanitize_llm_code(text: str) -> str:
+    """Strips markdown code fences (```lang ... ```) if the LLM output includes them."""
+    cleaned = text.strip()
+    match = re.search(r'```(?:\w+)?\n?(.*?)\n?```', cleaned, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return cleaned
+
 async def agent_node(state: AgentState) -> dict:
-    """Processes message arrays inside a unified system context framework."""
     messages = [SystemMessage(content=SYSTEM_PROMPT)] + list(state["messages"])
     response = await llm.ainvoke(messages)
+    
+    # Clean output
+    if hasattr(response, 'content'):
+        response.content = sanitize_llm_code(str(response.content))
+        
     return {"messages": [response]}
 
-# Define the production state graph loop matrix
 workflow = StateGraph(AgentState)
 workflow.add_node("agent", agent_node)
 workflow.set_entry_point("agent")
