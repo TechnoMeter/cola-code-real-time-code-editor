@@ -41,37 +41,31 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
         try:
             logger.info(f"[AI Worker-{room_id}] Requesting LLM completion...")
             
-            # Enforce 30 second global timeout for AI generation
             result = await asyncio.wait_for(
                 agent_engine.ainvoke({"messages": [user_payload]}), 
                 timeout=30.0
             )
-            ai_response = str(result["messages"][-1].content)
+            # Strip native LLM whitespace to prevent unpredictable padding
+            ai_response = str(result["messages"][-1].content).strip()
             
             current_text = str(text)
-            
-            # FIXED: Dynamically detect OS line endings to prevent y-monaco CRDT desynchronization
             line_ending = '\r\n' if '\r\n' in current_text else '\n'
             
-            # Force the LLM output to match the room's line ending
             ai_response = ai_response.replace('\r\n', '\n').replace('\n', line_ending)
             formatted_response = f"{line_ending}{ai_response}{line_ending}"
 
-            py_marker_idx = current_text.find(marker_text)
-            marker_len = len(marker_text)
-            
-            # Fallback for Monaco auto-formatter trim
-            if py_marker_idx == -1:
-                marker_text_stripped = marker_text.strip()
-                py_marker_idx = current_text.find(marker_text_stripped)
-                marker_len = len(marker_text_stripped)
+            # FIXED: Regex absorbs the marker AND any invisible ghost newlines Monaco added
+            safe_prompt = re.escape(prompt_text[:20])
+            pattern = r'/\*\s*\[AI Copilot generating code for: \'' + safe_prompt + r'\.\.\.' + r'\'\]\s*\*/[ \t\r\n]*'
+            match = re.search(pattern, current_text)
 
-            if py_marker_idx != -1:
-                start_idx = py_marker_idx
+            if match:
+                start_idx = match.start()
+                match_len = len(match.group(0)) # Calculates exact length including ghost newlines
+
                 sv_before = Y.encode_state_vector(doc)
-                
                 with doc.begin_transaction() as tx:
-                    for _ in range(marker_len):
+                    for _ in range(match_len):
                         text.delete(tx, start_idx)
                     text.insert(tx, start_idx, formatted_response)
                 
@@ -82,24 +76,24 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 
                 await websocket.send(packet)
                 logger.info(f"[AI Worker-{room_id}] Atomic CRDT update emitted.")
+            else:
+                logger.warning(f"[AI Worker-{room_id}] Marker text missing during replacement step.")
         except Exception as e:
             logger.error(f"[AI Worker-{room_id}] Generation failed or timed out: {e}. Cleaning up placeholder.")
             current_text = str(text)
+            line_ending = '\r\n' if '\r\n' in current_text else '\n'
             
-            py_marker_idx = current_text.find(marker_text)
-            marker_len = len(marker_text)
-            if py_marker_idx == -1:
-                marker_text_stripped = marker_text.strip()
-                py_marker_idx = current_text.find(marker_text_stripped)
-                marker_len = len(marker_text_stripped)
+            safe_prompt = re.escape(prompt_text[:20])
+            pattern = r'/\*\s*\[AI Copilot generating code for: \'' + safe_prompt + r'\.\.\.' + r'\'\]\s*\*/[ \t\r\n]*'
+            match = re.search(pattern, current_text)
                 
-            if py_marker_idx != -1:
-                start_idx = py_marker_idx
+            if match:
+                start_idx = match.start()
+                match_len = len(match.group(0))
                 sv_before = Y.encode_state_vector(doc)
-                line_ending = '\r\n' if '\r\n' in current_text else '\n'
                 
                 with doc.begin_transaction() as tx:
-                    for _ in range(marker_len):
+                    for _ in range(match_len):
                         text.delete(tx, start_idx)
                     text.insert(tx, start_idx, f"{line_ending}/* [AI Generation Error] */{line_ending}")
                     
@@ -174,10 +168,10 @@ async def listen_and_sync(room_id: str):
                         full_match = match.group(0)
                         prompt_text = match.group(1).strip()
                         
+                        # Retained your working exact-string find approach here
                         start_idx = current_text.find(full_match)
                         match_len = len(full_match)
                         
-                        # FIXED: Use correct line endings for the marker as well
                         line_ending = '\r\n' if '\r\n' in current_text else '\n'
                         marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */{line_ending}"
                         
