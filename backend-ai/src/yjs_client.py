@@ -34,21 +34,6 @@ def encode_varuint(val: int) -> bytearray:
     buf.append(val & 0x7F)
     return buf
 
-def sanitize_doc_line_endings(doc: Y.YDoc, text: Y.YText):
-    """
-    Strips all \r characters from Y.Text.
-    y-monaco requires pure \n (LF) to maintain accurate line/column offsets.
-    """
-    raw_str = str(text)
-    if '\r' in raw_str:
-        with doc.begin_transaction() as tx:
-            idx = 0
-            while idx < len(str(text)):
-                if str(text)[idx] == '\r':
-                    text.delete(tx, idx)
-                else:
-                    idx += 1
-
 async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, room_id, user_payload):
     lock = room_locks.setdefault(room_id, asyncio.Lock())
     
@@ -61,14 +46,15 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 timeout=30.0
             )
             
-            # Enforce strict LF (\n) line endings for y-monaco compatibility
+            # STRICT LF ENFORCEMENT: 
+            # y-monaco index mapping breaks if \r characters are injected into Y.Text
             ai_response = str(result["messages"][-1].content).strip()
             ai_response = ai_response.replace('\r\n', '\n').replace('\r', '')
             formatted_response = f"\n{ai_response}\n"
 
-            sanitize_doc_line_endings(doc, text)
             current_text = str(text)
 
+            # Regex robustly catches the marker + any ghost whitespace/newlines attached
             safe_prompt = re.escape(prompt_text[:20])
             pattern = r'/\*\s*\[AI Copilot generating code for: \'' + safe_prompt + r'\.\.\.' + r'\'\]\s*\*/[ \t\r\n]*'
             match = re.search(pattern, current_text)
@@ -94,7 +80,6 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 logger.warning(f"[AI Worker-{room_id}] Marker text missing during replacement step.")
         except Exception as e:
             logger.error(f"[AI Worker-{room_id}] Generation failed or timed out: {e}. Cleaning up placeholder.")
-            sanitize_doc_line_endings(doc, text)
             current_text = str(text)
             
             safe_prompt = re.escape(prompt_text[:20])
@@ -174,7 +159,6 @@ async def listen_and_sync(room_id: str):
                         logger.error(f"[AI Worker-{room_id}] Binary parse error: {e}")
                         continue
 
-                    sanitize_doc_line_endings(doc, text)
                     current_text = str(text)
                     match = re.search(r'/\*\s*@AI\s+(.*?)\s*\*/', current_text, re.DOTALL)
                     
@@ -186,6 +170,7 @@ async def listen_and_sync(room_id: str):
                         start_idx = current_text.find(full_match)
                         match_len = len(full_match)
                         
+                        # STRICT LF ENFORCEMENT
                         marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */\n"
                         
                         sv_before = Y.encode_state_vector(doc)
