@@ -61,8 +61,7 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
 
                 sv_before = Y.encode_state_vector(doc)
                 with doc.begin_transaction() as tx:
-                    for _ in range(yjs_marker_len):
-                        text.delete(tx, yjs_marker_idx)
+                    text.delete(tx, yjs_marker_idx, yjs_marker_len)
                     text.insert(tx, yjs_marker_idx, formatted_response)
                 
                 delta_update = Y.encode_state_as_update(doc, sv_before)
@@ -72,9 +71,10 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 
                 await websocket.send(packet)
                 logger.info(f"[AI Worker-{room_id}] Atomic CRDT update emitted.")
+            else:
+                logger.warning(f"[AI Worker-{room_id}] Marker text missing during replacement step.")
         except Exception as e:
             logger.error(f"[AI Worker-{room_id}] Generation failed or timed out: {e}. Cleaning up placeholder.")
-            # Ensure loading marker is deleted if generation fails
             current_text = str(text)
             py_marker_idx = current_text.find(marker_text)
             if py_marker_idx != -1:
@@ -83,8 +83,7 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 sv_before = Y.encode_state_vector(doc)
                 
                 with doc.begin_transaction() as tx:
-                    for _ in range(yjs_marker_len):
-                        text.delete(tx, yjs_marker_idx)
+                    text.delete(tx, yjs_marker_idx, yjs_marker_len)
                     text.insert(tx, yjs_marker_idx, f"\n/* [AI Generation Error: {str(e)[:50]}] */\n")
                     
                 delta_update = Y.encode_state_as_update(doc, sv_before)
@@ -104,7 +103,6 @@ async def listen_and_sync(room_id: str):
 
     while True:  # Infinite resilient worker loop
         try:
-            # Enable ping/pong keep-alive frames
             async with websockets.connect(uri, ping_interval=20, ping_timeout=20) as websocket:
                 backoff_delay = 2  # Reset delay on successful connection
                 
@@ -125,18 +123,22 @@ async def listen_and_sync(room_id: str):
                             if msg_type == 0:  # messageSync
                                 sync_msg_type, offset = read_varuint(message, offset)
                                 
-                                if sync_msg_type == 0:
+                                if sync_msg_type == 0:  # SyncStep1
                                     length, offset = read_varuint(message, offset)
                                     remote_state_vector = message[offset:offset + length]
+                                    offset += length  # FIXED: Advance offset past state vector
+                                    
                                     local_update = Y.encode_state_as_update(doc, bytes(remote_state_vector))
                                     reply = bytearray([0, 1])
                                     reply.extend(encode_varuint(len(local_update)))
                                     reply.extend(local_update)
                                     await websocket.send(reply)
                                     
-                                elif sync_msg_type in (1, 2):
+                                elif sync_msg_type in (1, 2):  # SyncStep2 / Update
                                     length, offset = read_varuint(message, offset)
                                     update_data = message[offset:offset + length]
+                                    offset += length  # FIXED: Advance offset past update payload
+                                    
                                     Y.apply_update(doc, bytes(update_data))
                                     
                             elif msg_type in (1, 2, 3):  # awareness / auth / query
@@ -164,8 +166,7 @@ async def listen_and_sync(room_id: str):
                         
                         sv_before = Y.encode_state_vector(doc)
                         with doc.begin_transaction() as tx:
-                            for _ in range(yjs_match_len):
-                                text.delete(tx, yjs_start_idx)
+                            text.delete(tx, yjs_start_idx, yjs_match_len)
                             text.insert(tx, yjs_start_idx, marker_text)
                                 
                         delta_update = Y.encode_state_as_update(doc, sv_before)
@@ -188,4 +189,4 @@ async def listen_and_sync(room_id: str):
         except Exception as e:
             logger.error(f"[AI Worker-{room_id}] WebSocket pipeline error: {e}. Retrying in {backoff_delay}s...")
             await asyncio.sleep(backoff_delay)
-            backoff_delay = min(backoff_delay * 2, 60)  # Exponential backoff capped at 60s
+            backoff_delay = min(backoff_delay * 2, 60)
