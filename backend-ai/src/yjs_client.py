@@ -46,22 +46,25 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 timeout=30.0
             )
             
-            # STRICT LF ENFORCEMENT: 
-            # y-monaco index mapping breaks if \r characters are injected into Y.Text
-            ai_response = str(result["messages"][-1].content).strip()
-            ai_response = ai_response.replace('\r\n', '\n').replace('\r', '')
-            formatted_response = f"\n{ai_response}\n"
-
             current_text = str(text)
+            
+            # 1. Match the document's line endings natively (prevents y-monaco cursor drift)
+            line_ending = '\r\n' if '\r\n' in current_text else '\n'
+            
+            ai_response = str(result["messages"][-1].content).strip()
+            ai_response = ai_response.replace('\r\n', '\n').replace('\n', line_ending)
+            formatted_response = f"{line_ending}{ai_response}{line_ending}"
 
-            # Regex robustly catches the marker + any ghost whitespace/newlines attached
-            safe_prompt = re.escape(prompt_text[:20])
-            pattern = r'/\*\s*\[AI Copilot generating code for: \'' + safe_prompt + r'\.\.\.' + r'\'\]\s*\*/[ \t\r\n]*'
-            match = re.search(pattern, current_text)
+            # 2. Find using native str.find (fixes the regex bug you found)
+            stripped_marker = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */"
+            start_idx = current_text.find(stripped_marker)
 
-            if match:
-                start_idx = match.start()
-                match_len = len(match.group(0))
+            if start_idx != -1:
+                match_len = len(stripped_marker)
+                
+                # 3. Safely absorb any invisible ghost newlines left by Monaco
+                while start_idx + match_len < len(current_text) and current_text[start_idx + match_len] in ('\r', '\n'):
+                    match_len += 1
 
                 sv_before = Y.encode_state_vector(doc)
                 with doc.begin_transaction() as tx:
@@ -81,20 +84,22 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
         except Exception as e:
             logger.error(f"[AI Worker-{room_id}] Generation failed or timed out: {e}. Cleaning up placeholder.")
             current_text = str(text)
+            line_ending = '\r\n' if '\r\n' in current_text else '\n'
             
-            safe_prompt = re.escape(prompt_text[:20])
-            pattern = r'/\*\s*\[AI Copilot generating code for: \'' + safe_prompt + r'\.\.\.' + r'\'\]\s*\*/[ \t\r\n]*'
-            match = re.search(pattern, current_text)
+            stripped_marker = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */"
+            start_idx = current_text.find(stripped_marker)
                 
-            if match:
-                start_idx = match.start()
-                match_len = len(match.group(0))
+            if start_idx != -1:
+                match_len = len(stripped_marker)
+                
+                while start_idx + match_len < len(current_text) and current_text[start_idx + match_len] in ('\r', '\n'):
+                    match_len += 1
+
                 sv_before = Y.encode_state_vector(doc)
-                
                 with doc.begin_transaction() as tx:
                     for _ in range(match_len):
                         text.delete(tx, start_idx)
-                    text.insert(tx, start_idx, "\n/* [AI Generation Error] */\n")
+                    text.insert(tx, start_idx, f"{line_ending}/* [AI Generation Error] */{line_ending}")
                     
                 delta_update = Y.encode_state_as_update(doc, sv_before)
                 packet = bytearray([0, 2])
@@ -168,30 +173,35 @@ async def listen_and_sync(room_id: str):
                         prompt_text = match.group(1).strip()
                         
                         start_idx = current_text.find(full_match)
-                        match_len = len(full_match)
-                        
-                        # STRICT LF ENFORCEMENT
-                        marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */\n"
-                        
-                        sv_before = Y.encode_state_vector(doc)
-                        with doc.begin_transaction() as tx:
-                            for _ in range(match_len):
-                                text.delete(tx, start_idx)
-                            text.insert(tx, start_idx, marker_text)
-                                
-                        delta_update = Y.encode_state_as_update(doc, sv_before)
-                        packet = bytearray([0, 2])
-                        packet.extend(encode_varuint(len(delta_update)))
-                        packet.extend(delta_update)
-                        await websocket.send(packet)
-                        
-                        user_payload = HumanMessage(
-                            content=f"Surrounding Workspace Code Context:\n{current_text}\n\nUser Instruction: {prompt_text}"
-                        )
-                        
-                        asyncio.create_task(
-                            process_ai_generation(prompt_text, marker_text, doc, text, websocket, room_id, user_payload)
-                        )
+                        if start_idx != -1:
+                            match_len = len(full_match)
+                            
+                            # Absorb ghost newlines after the human prompt
+                            while start_idx + match_len < len(current_text) and current_text[start_idx + match_len] in ('\r', '\n'):
+                                match_len += 1
+                            
+                            line_ending = '\r\n' if '\r\n' in current_text else '\n'
+                            marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */{line_ending}"
+                            
+                            sv_before = Y.encode_state_vector(doc)
+                            with doc.begin_transaction() as tx:
+                                for _ in range(match_len):
+                                    text.delete(tx, start_idx)
+                                text.insert(tx, start_idx, marker_text)
+                                    
+                            delta_update = Y.encode_state_as_update(doc, sv_before)
+                            packet = bytearray([0, 2])
+                            packet.extend(encode_varuint(len(delta_update)))
+                            packet.extend(delta_update)
+                            await websocket.send(packet)
+                            
+                            user_payload = HumanMessage(
+                                content=f"Surrounding Workspace Code Context:\n{current_text}\n\nUser Instruction: {prompt_text}"
+                            )
+                            
+                            asyncio.create_task(
+                                process_ai_generation(prompt_text, marker_text, doc, text, websocket, room_id, user_payload)
+                            )
 
         except asyncio.CancelledError:
             logger.info(f"[AI Worker-{room_id}] Worker teardown requested.")
