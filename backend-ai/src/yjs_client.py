@@ -60,13 +60,13 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 marker_len = len(marker_text_stripped)
 
             if py_marker_idx != -1:
-                # y-py expects native Python character indices, not UTF-16 conversions
-                start_idx = len(current_text[:py_marker_idx])
+                start_idx = py_marker_idx
 
                 sv_before = Y.encode_state_vector(doc)
                 with doc.begin_transaction() as tx:
-                    # Atomic block deletion
-                    text.delete(tx, start_idx, marker_len)
+                    # y-py delete takes (tx, index) - delete 1 char per iteration
+                    for _ in range(marker_len):
+                        text.delete(tx, start_idx)
                     text.insert(tx, start_idx, formatted_response)
                 
                 delta_update = Y.encode_state_as_update(doc, sv_before)
@@ -82,7 +82,6 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
             logger.error(f"[AI Worker-{room_id}] Generation failed or timed out: {e}. Cleaning up placeholder.")
             current_text = str(text)
             
-            # Same fallback logic for error cleanup
             py_marker_idx = current_text.find(marker_text)
             marker_len = len(marker_text)
             if py_marker_idx == -1:
@@ -91,11 +90,12 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 marker_len = len(marker_text_stripped)
                 
             if py_marker_idx != -1:
-                start_idx = len(current_text[:py_marker_idx])
+                start_idx = py_marker_idx
                 sv_before = Y.encode_state_vector(doc)
                 
                 with doc.begin_transaction() as tx:
-                    text.delete(tx, start_idx, marker_len)
+                    for _ in range(marker_len):
+                        text.delete(tx, start_idx)
                     text.insert(tx, start_idx, f"\n/* [AI Generation Error: {str(e)[:50]}] */\n")
                     
                 delta_update = Y.encode_state_as_update(doc, sv_before)
@@ -170,15 +170,15 @@ async def listen_and_sync(room_id: str):
                         full_match = match.group(0)
                         prompt_text = match.group(1).strip()
                         
-                        py_start_idx = current_text.find(full_match)
-                        start_idx = len(current_text[:py_start_idx])
+                        start_idx = current_text.find(full_match)
                         match_len = len(full_match)
                         
                         marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */\n"
                         
                         sv_before = Y.encode_state_vector(doc)
                         with doc.begin_transaction() as tx:
-                            text.delete(tx, start_idx, match_len)
+                            for _ in range(match_len):
+                                text.delete(tx, start_idx)
                             text.insert(tx, start_idx, marker_text)
                                 
                         delta_update = Y.encode_state_as_update(doc, sv_before)
