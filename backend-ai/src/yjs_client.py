@@ -174,7 +174,7 @@ async def listen_and_sync(room_id: str):
                         full_match = match.group(0)
                         prompt_text = match.group(1).strip()
                         
-                        start_idx = match.start()
+                        start_idx = current_text.find(full_match)
                         match_len = len(full_match)
                         
                         # FIXED: Use correct line endings for the marker as well
