@@ -34,6 +34,21 @@ def encode_varuint(val: int) -> bytearray:
     buf.append(val & 0x7F)
     return buf
 
+def sanitize_doc_line_endings(doc: Y.YDoc, text: Y.YText):
+    """
+    Strips all \r characters from Y.Text.
+    y-monaco requires pure \n (LF) to maintain accurate line/column offsets.
+    """
+    raw_str = str(text)
+    if '\r' in raw_str:
+        with doc.begin_transaction() as tx:
+            idx = 0
+            while idx < len(str(text)):
+                if str(text)[idx] == '\r':
+                    text.delete(tx, idx)
+                else:
+                    idx += 1
+
 async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, room_id, user_payload):
     lock = room_locks.setdefault(room_id, asyncio.Lock())
     
@@ -45,23 +60,22 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 agent_engine.ainvoke({"messages": [user_payload]}), 
                 timeout=30.0
             )
-            # Strip native LLM whitespace to prevent unpredictable padding
+            
+            # Enforce strict LF (\n) line endings for y-monaco compatibility
             ai_response = str(result["messages"][-1].content).strip()
-            
-            current_text = str(text)
-            line_ending = '\r\n' if '\r\n' in current_text else '\n'
-            
-            ai_response = ai_response.replace('\r\n', '\n').replace('\n', line_ending)
-            formatted_response = f"{line_ending}{ai_response}{line_ending}"
+            ai_response = ai_response.replace('\r\n', '\n').replace('\r', '')
+            formatted_response = f"\n{ai_response}\n"
 
-            # FIXED: Regex absorbs the marker AND any invisible ghost newlines Monaco added
+            sanitize_doc_line_endings(doc, text)
+            current_text = str(text)
+
             safe_prompt = re.escape(prompt_text[:20])
             pattern = r'/\*\s*\[AI Copilot generating code for: \'' + safe_prompt + r'\.\.\.' + r'\'\]\s*\*/[ \t\r\n]*'
             match = re.search(pattern, current_text)
 
             if match:
                 start_idx = match.start()
-                match_len = len(match.group(0)) # Calculates exact length including ghost newlines
+                match_len = len(match.group(0))
 
                 sv_before = Y.encode_state_vector(doc)
                 with doc.begin_transaction() as tx:
@@ -80,8 +94,8 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 logger.warning(f"[AI Worker-{room_id}] Marker text missing during replacement step.")
         except Exception as e:
             logger.error(f"[AI Worker-{room_id}] Generation failed or timed out: {e}. Cleaning up placeholder.")
+            sanitize_doc_line_endings(doc, text)
             current_text = str(text)
-            line_ending = '\r\n' if '\r\n' in current_text else '\n'
             
             safe_prompt = re.escape(prompt_text[:20])
             pattern = r'/\*\s*\[AI Copilot generating code for: \'' + safe_prompt + r'\.\.\.' + r'\'\]\s*\*/[ \t\r\n]*'
@@ -95,7 +109,7 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 with doc.begin_transaction() as tx:
                     for _ in range(match_len):
                         text.delete(tx, start_idx)
-                    text.insert(tx, start_idx, f"{line_ending}/* [AI Generation Error] */{line_ending}")
+                    text.insert(tx, start_idx, "\n/* [AI Generation Error] */\n")
                     
                 delta_update = Y.encode_state_as_update(doc, sv_before)
                 packet = bytearray([0, 2])
@@ -160,6 +174,7 @@ async def listen_and_sync(room_id: str):
                         logger.error(f"[AI Worker-{room_id}] Binary parse error: {e}")
                         continue
 
+                    sanitize_doc_line_endings(doc, text)
                     current_text = str(text)
                     match = re.search(r'/\*\s*@AI\s+(.*?)\s*\*/', current_text, re.DOTALL)
                     
@@ -168,12 +183,10 @@ async def listen_and_sync(room_id: str):
                         full_match = match.group(0)
                         prompt_text = match.group(1).strip()
                         
-                        # Retained your working exact-string find approach here
                         start_idx = current_text.find(full_match)
                         match_len = len(full_match)
                         
-                        line_ending = '\r\n' if '\r\n' in current_text else '\n'
-                        marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */{line_ending}"
+                        marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */\n"
                         
                         sv_before = Y.encode_state_vector(doc)
                         with doc.begin_transaction() as tx:
