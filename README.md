@@ -16,7 +16,7 @@
 <img src="https://img.shields.io/badge/Monaco_Editor-VSCode-007ACC.svg?style=flat-square&logo=visual-studio-code&logoColor=white" alt="Monaco Editor">
 <img src="https://img.shields.io/badge/LangGraph-Agentic_AI-000000.svg?style=flat-square" alt="LangGraph">
 <img src="https://img.shields.io/badge/Redis_Cloud-Upstash-DC382D.svg?style=flat-square&logo=redis&logoColor=white" alt="Redis Cloud">
-<img src="https://img.shields.io/badge/PostgreSQL-Render-4169E1.svg?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL">
+<img src="https://img.shields.io/badge/PostgreSQL-Neon-00E599.svg?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL">
 <img src="https://img.shields.io/badge/Vite-5.0-646CFF.svg?style=flat-square&logo=vite&logoColor=white" alt="Vite">
 <img src="https://img.shields.io/badge/TailwindCSS-4.0-38BDF8.svg?style=flat-square&logo=tailwind-css&logoColor=white" alt="TailwindCSS">
 
@@ -88,7 +88,7 @@ flowchart TD
 
     subgraph State ["4. State & Persistence"]
         Redis[("Upstash Redis<br/>(Pub/Sub & Hot Cache)")]:::cache
-        PG[("Render PostgreSQL<br/>(Cold Binary Storage)")]:::db
+        PG[("Neon PostgreSQL<br/>(Cold Binary Storage)")]:::db
     end
 
     ClientA <-->|"Yjs Uint8Array Sync"| WS1
@@ -110,7 +110,7 @@ flowchart TD
 | **Frontend**       | Netlify          | Serves the React + Monaco editor with real‑time collaboration UI.      |
 | **Sync Gateway**   | Render (Docker)  | Node.js WebSocket server handling Yjs sync, awareness, and Redis Pub/Sub. |
 | **AI Copilot**     | Render (Docker)  | Python FastAPI + LangGraph worker, connected via WebSocket to the gateway. |
-| **PostgreSQL**     | Render Managed   | Cold storage for Yjs document snapshots (binary `BYTEA`).               |
+| **PostgreSQL**     | Neon Serverless  | Cold storage for Yjs document snapshots (binary `BYTEA`).               |
 | **Redis**          | Upstash          | Pub/Sub backplane and hot cache for active rooms.                      |
 | **Uptime Monitor** | UptimeRobot      | Keeps Render services alive by pinging every 5 minutes.               |
 
@@ -227,7 +227,7 @@ colacode/
 ### 🧠 Key Logic Deep‑Dive: The Most Complex Parts
 
 #### 1. `backend-sync/src/server.ts` – WebSocket Gateway & Redis Backplane
-- **Room Lifecycle:** Each document room has a `WSSharedDoc` (a Yjs document with awareness). When the first client connects, the doc is created; when the last client disconnects, the doc is flushed to PostgreSQL and destroyed.
+- **Room Lifecycle:** Each document room has a `WSSharedDoc` (a Yjs document with awareness). When the first client connects, the doc rehydrates its binary state from Neon PostgreSQL (`loadDocumentFromDB`); when the last client disconnects, the doc is flushed back to PostgreSQL (`flushDocumentToDB`) and destroyed.
 - **Redis Pub/Sub:** All sync instances subscribe to `doc-update-{room}` channels. When a client sends an update, the server broadcasts it to other clients in the same instance and publishes it to Redis so that other instances receive it.
 - **Protocol Parsing:** The server handles Yjs sync messages (step 1, step 2, update) and awareness messages, all using `lib0` varuint encoding. Malformed packets are caught and dropped without crashing the process.
 
@@ -326,9 +326,15 @@ All services are deployed on free tiers of popular platforms. Here’s how to re
   - [Netlify](https://netlify.com) or [Vercel](https://vercel.com) (for frontend)
   - [UptimeRobot](https://uptimerobot.com) (optional, to keep services awake)
 
-### Step 1 – PostgreSQL (Render)
-- Click **New** → **PostgreSQL** and choose the **Free** plan.
-- Copy the **Internal Database URL**; extract `PG_USER`, `PG_PASSWORD`, `PG_HOST`, `PG_DB`, `PG_PORT` (all from the URL).
+### Step 1 – PostgreSQL (Neon)
+- Sign up at [Neon.tech](https://neon.tech) and create a project named `colacode`.
+- Run `infrastructure/init.sql` using Neon's **SQL Editor** or `psql` to create the `documents` table.
+- Copy your connection credentials from the Neon dashboard:
+  - `PG_HOST`: `ep-xxx-pooler.c-4.region.aws.neon.tech` (use the Pooled host endpoint for serverless application connections)
+  - `PG_USER`: `neondb_owner`
+  - `PG_PASSWORD`: `<your-neon-password>`
+  - `PG_DB`: `neondb`
+  - `PG_PORT`: `5432`
 
 ### Step 2 – Redis (Upstash)
 - Create a Redis database on the free tier.
@@ -388,7 +394,7 @@ Render free services sleep after 15 minutes of inactivity. To prevent cold start
 | `PG_USER`              | Sync Gateway         | PostgreSQL username.                                                                      |
 | `PG_PASSWORD`          | Sync Gateway         | PostgreSQL password.                                                                      |
 | `PG_DB`                | Sync Gateway         | PostgreSQL database name.                                                                 |
-| `PG_HOST`              | Sync Gateway         | PostgreSQL host (e.g., `dpg-xxx.internal.render.com`).                                    |
+| `PG_HOST`              | Sync Gateway         | PostgreSQL host (e.g., `ep-xxx-pooler.c-4.region.aws.neon.tech`).                         |
 | `PG_PORT`              | Sync Gateway         | PostgreSQL port (default 5432).                                                           |
 | `REDIS_URL`            | Sync Gateway, AI     | Redis connection string (Upstash: `rediss://...`).                                        |
 | `LLM_API_KEY`          | AI Worker            | Google Gemini (or OpenAI‑compatible) API key.                                             |

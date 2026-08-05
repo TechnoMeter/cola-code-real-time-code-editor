@@ -8,12 +8,17 @@ import * as awarenessProtocol from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import { flushDocumentToDB, loadDocumentFromDB } from './persistence';
-import { createServer } from 'http';
 
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
-const server = http.createServer();
+
+// HTTP server with health endpoint for Render port scanning and health checks
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Sync Gateway Operational');
+});
+
 const wss = new WebSocketServer({ server });
 
 const redisPub = new Redis(process.env.REDIS_URL as string);
@@ -183,6 +188,7 @@ wss.on('connection', async (ws: WebSocket, req: http.IncomingMessage) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`[Sync Gateway] Active on port ${PORT}`);
+// Explicitly listen on 0.0.0.0 for containerized deployment routing
+server.listen(Number(PORT), '0.0.0.0', () => {
+  console.log(`[Sync Gateway] Active on port ${PORT} bound to 0.0.0.0`);
 });
