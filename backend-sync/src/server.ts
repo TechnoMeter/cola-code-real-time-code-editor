@@ -7,7 +7,7 @@ import * as sync from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
-import { flushDocumentToDB } from './persistence';
+import { flushDocumentToDB, loadDocumentFromDB } from './persistence';
 import { createServer } from 'http';
 
 dotenv.config();
@@ -63,7 +63,7 @@ redisSub.on('pmessage', (pattern, channel, message) => {
   }
 });
 
-wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+wss.on('connection', async (ws: WebSocket, req: http.IncomingMessage) => {
   const url = new URL(req.url || '', `http://${req.headers.host}`);
   const docName = url.pathname.slice(1).split('?')[0] || 'default-room';
 
@@ -71,6 +71,17 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   if (!doc) {
     doc = new WSSharedDoc(docName);
     docs.set(docName, doc);
+
+    // Rehydrate state from PostgreSQL if saved state exists
+    try {
+      const savedState = await loadDocumentFromDB(docName);
+      if (savedState) {
+        Y.applyUpdate(doc, savedState, 'db-rehydrate');
+        console.log(`[Sync Gateway] Rehydrated document state from DB for room: ${docName}`);
+      }
+    } catch (error) {
+      console.error(`[DB Error] Failed to load document state for ${docName}:`, error);
+    }
 
     doc.awareness.on('update', ({ added, updated }: any, origin: any) => {
       const controlled = connControlledIds.get(origin);
@@ -127,9 +138,8 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   ws.on('message', (message: Buffer) => {
     if (!doc) return;
     
-    // PRODUCTION HARDENING: Wrap the protocol processing loop in a defensive boundary
     try {
-      if (message.length === 0) return; // Drop empty keep-alive frames immediately
+      if (message.length === 0) return;
 
       const decoder = decoding.createDecoder(new Uint8Array(message));
       const messageType = decoding.readVarUint(decoder);
@@ -146,7 +156,6 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
         awarenessProtocol.applyAwarenessUpdate(doc.awareness, awarenessUpdate, ws);
       }
     } catch (error) {
-      // Catch exceptions from malformed payloads and preserve system uptime
       console.warn(`[Gateway Warning] Dropped malformed protocol frame from client:`, error);
     }
   });
