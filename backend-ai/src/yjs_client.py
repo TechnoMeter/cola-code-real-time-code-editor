@@ -47,13 +47,20 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 timeout=30.0
             )
             ai_response = str(result["messages"][-1].content)
-            formatted_response = f"\n{ai_response}\n"
-
+            
             current_text = str(text)
             
-            # Fallback in case Monaco auto-formats/trims the trailing newline
+            # FIXED: Dynamically detect OS line endings to prevent y-monaco CRDT desynchronization
+            line_ending = '\r\n' if '\r\n' in current_text else '\n'
+            
+            # Force the LLM output to match the room's line ending
+            ai_response = ai_response.replace('\r\n', '\n').replace('\n', line_ending)
+            formatted_response = f"{line_ending}{ai_response}{line_ending}"
+
             py_marker_idx = current_text.find(marker_text)
             marker_len = len(marker_text)
+            
+            # Fallback for Monaco auto-formatter trim
             if py_marker_idx == -1:
                 marker_text_stripped = marker_text.strip()
                 py_marker_idx = current_text.find(marker_text_stripped)
@@ -61,10 +68,9 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
 
             if py_marker_idx != -1:
                 start_idx = py_marker_idx
-
                 sv_before = Y.encode_state_vector(doc)
+                
                 with doc.begin_transaction() as tx:
-                    # y-py delete takes (tx, index) - delete 1 char per iteration
                     for _ in range(marker_len):
                         text.delete(tx, start_idx)
                     text.insert(tx, start_idx, formatted_response)
@@ -76,8 +82,6 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 
                 await websocket.send(packet)
                 logger.info(f"[AI Worker-{room_id}] Atomic CRDT update emitted.")
-            else:
-                logger.warning(f"[AI Worker-{room_id}] Marker text missing during replacement step.")
         except Exception as e:
             logger.error(f"[AI Worker-{room_id}] Generation failed or timed out: {e}. Cleaning up placeholder.")
             current_text = str(text)
@@ -92,11 +96,12 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
             if py_marker_idx != -1:
                 start_idx = py_marker_idx
                 sv_before = Y.encode_state_vector(doc)
+                line_ending = '\r\n' if '\r\n' in current_text else '\n'
                 
                 with doc.begin_transaction() as tx:
                     for _ in range(marker_len):
                         text.delete(tx, start_idx)
-                    text.insert(tx, start_idx, f"\n/* [AI Generation Error: {str(e)[:50]}] */\n")
+                    text.insert(tx, start_idx, f"{line_ending}/* [AI Generation Error] */{line_ending}")
                     
                 delta_update = Y.encode_state_as_update(doc, sv_before)
                 packet = bytearray([0, 2])
@@ -113,10 +118,10 @@ async def listen_and_sync(room_id: str):
 
     logger.info(f"[AI Worker-{room_id}] Initializing socket channel to {uri}")
 
-    while True:  # Infinite resilient worker loop
+    while True:
         try:
             async with websockets.connect(uri, ping_interval=20, ping_timeout=20) as websocket:
-                backoff_delay = 2  # Reset delay on successful connection
+                backoff_delay = 2 
                 
                 init_handshake = bytearray([0, 0, 1, 0])
                 await websocket.send(init_handshake)
@@ -132,7 +137,7 @@ async def listen_and_sync(room_id: str):
                         while offset < message_length:
                             msg_type, offset = read_varuint(message, offset)
                             
-                            if msg_type == 0:  # messageSync
+                            if msg_type == 0: 
                                 sync_msg_type, offset = read_varuint(message, offset)
                                 
                                 if sync_msg_type == 0:
@@ -150,10 +155,9 @@ async def listen_and_sync(room_id: str):
                                     length, offset = read_varuint(message, offset)
                                     update_data = message[offset:offset + length]
                                     offset += length
-                                    
                                     Y.apply_update(doc, bytes(update_data))
                                     
-                            elif msg_type in (1, 2, 3):  # awareness / auth / query
+                            elif msg_type in (1, 2, 3):
                                 length, offset = read_varuint(message, offset)
                                 offset += length
                             else:
@@ -173,7 +177,9 @@ async def listen_and_sync(room_id: str):
                         start_idx = current_text.find(full_match)
                         match_len = len(full_match)
                         
-                        marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */\n"
+                        # FIXED: Use correct line endings for the marker as well
+                        line_ending = '\r\n' if '\r\n' in current_text else '\n'
+                        marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */{line_ending}"
                         
                         sv_before = Y.encode_state_vector(doc)
                         with doc.begin_transaction() as tx:
