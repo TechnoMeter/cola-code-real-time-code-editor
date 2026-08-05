@@ -34,9 +34,6 @@ def encode_varuint(val: int) -> bytearray:
     buf.append(val & 0x7F)
     return buf
 
-def utf16_len(s: str) -> int:
-    return len(s.encode('utf-16-le')) // 2
-
 async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, room_id, user_payload):
     lock = room_locks.setdefault(room_id, asyncio.Lock())
     
@@ -53,18 +50,24 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
             formatted_response = f"\n{ai_response}\n"
 
             current_text = str(text)
-            py_marker_idx = current_text.find(marker_text)
             
+            # Fallback in case Monaco auto-formats/trims the trailing newline
+            py_marker_idx = current_text.find(marker_text)
+            marker_len = len(marker_text)
+            if py_marker_idx == -1:
+                marker_text_stripped = marker_text.strip()
+                py_marker_idx = current_text.find(marker_text_stripped)
+                marker_len = len(marker_text_stripped)
+
             if py_marker_idx != -1:
-                yjs_marker_idx = utf16_len(current_text[:py_marker_idx])
-                yjs_marker_len = utf16_len(marker_text)
+                # y-py expects native Python character indices, not UTF-16 conversions
+                start_idx = len(current_text[:py_marker_idx])
 
                 sv_before = Y.encode_state_vector(doc)
                 with doc.begin_transaction() as tx:
-                    # Restored original loop-based deletion for strict y-py API backwards compatibility
-                    for _ in range(yjs_marker_len):
-                        text.delete(tx, yjs_marker_idx)
-                    text.insert(tx, yjs_marker_idx, formatted_response)
+                    # Atomic block deletion
+                    text.delete(tx, start_idx, marker_len)
+                    text.insert(tx, start_idx, formatted_response)
                 
                 delta_update = Y.encode_state_as_update(doc, sv_before)
                 packet = bytearray([0, 2])
@@ -73,19 +76,27 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 
                 await websocket.send(packet)
                 logger.info(f"[AI Worker-{room_id}] Atomic CRDT update emitted.")
+            else:
+                logger.warning(f"[AI Worker-{room_id}] Marker text missing during replacement step.")
         except Exception as e:
             logger.error(f"[AI Worker-{room_id}] Generation failed or timed out: {e}. Cleaning up placeholder.")
             current_text = str(text)
+            
+            # Same fallback logic for error cleanup
             py_marker_idx = current_text.find(marker_text)
+            marker_len = len(marker_text)
+            if py_marker_idx == -1:
+                marker_text_stripped = marker_text.strip()
+                py_marker_idx = current_text.find(marker_text_stripped)
+                marker_len = len(marker_text_stripped)
+                
             if py_marker_idx != -1:
-                yjs_marker_idx = utf16_len(current_text[:py_marker_idx])
-                yjs_marker_len = utf16_len(marker_text)
+                start_idx = len(current_text[:py_marker_idx])
                 sv_before = Y.encode_state_vector(doc)
                 
                 with doc.begin_transaction() as tx:
-                    for _ in range(yjs_marker_len):
-                        text.delete(tx, yjs_marker_idx)
-                    text.insert(tx, yjs_marker_idx, f"\n/* [AI Generation Error: {str(e)[:50]}] */\n")
+                    text.delete(tx, start_idx, marker_len)
+                    text.insert(tx, start_idx, f"\n/* [AI Generation Error: {str(e)[:50]}] */\n")
                     
                 delta_update = Y.encode_state_as_update(doc, sv_before)
                 packet = bytearray([0, 2])
@@ -127,7 +138,7 @@ async def listen_and_sync(room_id: str):
                                 if sync_msg_type == 0:
                                     length, offset = read_varuint(message, offset)
                                     remote_state_vector = message[offset:offset + length]
-                                    offset += length  # REQUIRED FIX: Advance pointer past payload
+                                    offset += length
                                     
                                     local_update = Y.encode_state_as_update(doc, bytes(remote_state_vector))
                                     reply = bytearray([0, 1])
@@ -138,7 +149,7 @@ async def listen_and_sync(room_id: str):
                                 elif sync_msg_type in (1, 2):
                                     length, offset = read_varuint(message, offset)
                                     update_data = message[offset:offset + length]
-                                    offset += length  # REQUIRED FIX: Advance pointer past payload
+                                    offset += length
                                     
                                     Y.apply_update(doc, bytes(update_data))
                                     
@@ -160,16 +171,15 @@ async def listen_and_sync(room_id: str):
                         prompt_text = match.group(1).strip()
                         
                         py_start_idx = current_text.find(full_match)
-                        yjs_start_idx = utf16_len(current_text[:py_start_idx])
-                        yjs_match_len = utf16_len(full_match)
+                        start_idx = len(current_text[:py_start_idx])
+                        match_len = len(full_match)
                         
                         marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */\n"
                         
                         sv_before = Y.encode_state_vector(doc)
                         with doc.begin_transaction() as tx:
-                            for _ in range(yjs_match_len):
-                                text.delete(tx, yjs_start_idx)
-                            text.insert(tx, yjs_start_idx, marker_text)
+                            text.delete(tx, start_idx, match_len)
+                            text.insert(tx, start_idx, marker_text)
                                 
                         delta_update = Y.encode_state_as_update(doc, sv_before)
                         packet = bytearray([0, 2])
