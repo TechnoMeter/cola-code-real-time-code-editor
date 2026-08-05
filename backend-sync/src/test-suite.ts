@@ -25,6 +25,9 @@ async function runTests() {
     database: process.env.PG_DB,
     password: process.env.PG_PASSWORD,
     port: parseInt(process.env.PG_PORT || '5432', 10),
+    ssl: {
+      rejectUnauthorized: false, // Required for Neon cloud PostgreSQL
+    },
   });
   const redisClient = new Redis(process.env.REDIS_URL as string);
 
