@@ -61,7 +61,9 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
 
                 sv_before = Y.encode_state_vector(doc)
                 with doc.begin_transaction() as tx:
-                    text.delete(tx, yjs_marker_idx, yjs_marker_len)
+                    # Restored original loop-based deletion for strict y-py API backwards compatibility
+                    for _ in range(yjs_marker_len):
+                        text.delete(tx, yjs_marker_idx)
                     text.insert(tx, yjs_marker_idx, formatted_response)
                 
                 delta_update = Y.encode_state_as_update(doc, sv_before)
@@ -71,8 +73,6 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 
                 await websocket.send(packet)
                 logger.info(f"[AI Worker-{room_id}] Atomic CRDT update emitted.")
-            else:
-                logger.warning(f"[AI Worker-{room_id}] Marker text missing during replacement step.")
         except Exception as e:
             logger.error(f"[AI Worker-{room_id}] Generation failed or timed out: {e}. Cleaning up placeholder.")
             current_text = str(text)
@@ -83,7 +83,8 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 sv_before = Y.encode_state_vector(doc)
                 
                 with doc.begin_transaction() as tx:
-                    text.delete(tx, yjs_marker_idx, yjs_marker_len)
+                    for _ in range(yjs_marker_len):
+                        text.delete(tx, yjs_marker_idx)
                     text.insert(tx, yjs_marker_idx, f"\n/* [AI Generation Error: {str(e)[:50]}] */\n")
                     
                 delta_update = Y.encode_state_as_update(doc, sv_before)
@@ -123,10 +124,10 @@ async def listen_and_sync(room_id: str):
                             if msg_type == 0:  # messageSync
                                 sync_msg_type, offset = read_varuint(message, offset)
                                 
-                                if sync_msg_type == 0:  # SyncStep1
+                                if sync_msg_type == 0:
                                     length, offset = read_varuint(message, offset)
                                     remote_state_vector = message[offset:offset + length]
-                                    offset += length  # FIXED: Advance offset past state vector
+                                    offset += length  # REQUIRED FIX: Advance pointer past payload
                                     
                                     local_update = Y.encode_state_as_update(doc, bytes(remote_state_vector))
                                     reply = bytearray([0, 1])
@@ -134,10 +135,10 @@ async def listen_and_sync(room_id: str):
                                     reply.extend(local_update)
                                     await websocket.send(reply)
                                     
-                                elif sync_msg_type in (1, 2):  # SyncStep2 / Update
+                                elif sync_msg_type in (1, 2):
                                     length, offset = read_varuint(message, offset)
                                     update_data = message[offset:offset + length]
-                                    offset += length  # FIXED: Advance offset past update payload
+                                    offset += length  # REQUIRED FIX: Advance pointer past payload
                                     
                                     Y.apply_update(doc, bytes(update_data))
                                     
@@ -166,7 +167,8 @@ async def listen_and_sync(room_id: str):
                         
                         sv_before = Y.encode_state_vector(doc)
                         with doc.begin_transaction() as tx:
-                            text.delete(tx, yjs_start_idx, yjs_match_len)
+                            for _ in range(yjs_match_len):
+                                text.delete(tx, yjs_start_idx)
                             text.insert(tx, yjs_start_idx, marker_text)
                                 
                         delta_update = Y.encode_state_as_update(doc, sv_before)
