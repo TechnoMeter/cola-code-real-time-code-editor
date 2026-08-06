@@ -60,9 +60,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-@app.get("/health")
+# --- UPDATE HEALTH ROUTE ---
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health_check():
     return {
         "status": "healthy", 
         "active_monitored_rooms": [r for r, t in active_room_tasks.items() if not t.done()]
     }
+
+@app.api_route("/", methods=["GET", "HEAD"])
+def root():
+    return {"status": "ok", "service": "backend-ai"}
