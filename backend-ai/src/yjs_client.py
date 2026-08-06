@@ -46,24 +46,21 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
                 timeout=30.0
             )
             
-            current_text = str(text)
-            
-            # 1. Match the document's line endings natively (prevents y-monaco cursor drift)
-            line_ending = '\r\n' if '\r\n' in current_text else '\n'
-            
+            # STRICT LF ENFORCEMENT: Strips all \r characters. 
+            # Injecting \r\n permanently breaks y-monaco's index mapping.
             ai_response = str(result["messages"][-1].content).strip()
-            ai_response = ai_response.replace('\r\n', '\n').replace('\n', line_ending)
-            formatted_response = f"{line_ending}{ai_response}{line_ending}"
+            ai_response = ai_response.replace('\r\n', '\n').replace('\r', '')
+            formatted_response = f"\n{ai_response}\n"
 
-            # 2. Find using native str.find (fixes the regex bug you found)
+            current_text = str(text)
             stripped_marker = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */"
             start_idx = current_text.find(stripped_marker)
 
             if start_idx != -1:
                 match_len = len(stripped_marker)
                 
-                # 3. Safely absorb any invisible ghost newlines left by Monaco
-                while start_idx + match_len < len(current_text) and current_text[start_idx + match_len] in ('\r', '\n'):
+                # Safely absorb any invisible ghost newlines or spaces left by Monaco
+                while start_idx + match_len < len(current_text) and current_text[start_idx + match_len] in ('\r', '\n', ' ', '\t'):
                     match_len += 1
 
                 sv_before = Y.encode_state_vector(doc)
@@ -84,22 +81,21 @@ async def process_ai_generation(prompt_text, marker_text, doc, text, websocket, 
         except Exception as e:
             logger.error(f"[AI Worker-{room_id}] Generation failed or timed out: {e}. Cleaning up placeholder.")
             current_text = str(text)
-            line_ending = '\r\n' if '\r\n' in current_text else '\n'
-            
             stripped_marker = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */"
             start_idx = current_text.find(stripped_marker)
                 
             if start_idx != -1:
                 match_len = len(stripped_marker)
                 
-                while start_idx + match_len < len(current_text) and current_text[start_idx + match_len] in ('\r', '\n'):
+                while start_idx + match_len < len(current_text) and current_text[start_idx + match_len] in ('\r', '\n', ' ', '\t'):
                     match_len += 1
 
                 sv_before = Y.encode_state_vector(doc)
                 with doc.begin_transaction() as tx:
                     for _ in range(match_len):
                         text.delete(tx, start_idx)
-                    text.insert(tx, start_idx, f"{line_ending}/* [AI Generation Error] */{line_ending}")
+                    # STRICT LF ENFORCEMENT
+                    text.insert(tx, start_idx, "\n/* [AI Generation Error] */\n")
                     
                 delta_update = Y.encode_state_as_update(doc, sv_before)
                 packet = bytearray([0, 2])
@@ -176,12 +172,11 @@ async def listen_and_sync(room_id: str):
                         if start_idx != -1:
                             match_len = len(full_match)
                             
-                            # Absorb ghost newlines after the human prompt
-                            while start_idx + match_len < len(current_text) and current_text[start_idx + match_len] in ('\r', '\n'):
+                            while start_idx + match_len < len(current_text) and current_text[start_idx + match_len] in ('\r', '\n', ' ', '\t'):
                                 match_len += 1
                             
-                            line_ending = '\r\n' if '\r\n' in current_text else '\n'
-                            marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */{line_ending}"
+                            # STRICT LF ENFORCEMENT
+                            marker_text = f"/* [AI Copilot generating code for: '{prompt_text[:20]}...'] */\n"
                             
                             sv_before = Y.encode_state_vector(doc)
                             with doc.begin_transaction() as tx:
