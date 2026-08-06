@@ -36,22 +36,44 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
       scrollbar: { useShadows: false, verticalHasArrows: false },
       padding: { top: 16 },
       contextmenu: false,
+      eol: '\n', // Set default editor newline behavior
     });
     editorRef.current = editor;
 
     // Force an immediate layout bounds recalculation
     setTimeout(() => editor.layout(), 50);
 
+    const model = editor.getModel();
     const yText = ydoc.getText('monaco-content');
 
-    // Connect text sync and awareness vectors using native y-monaco bindings
-    const binding = new MonacoBinding(
-      yText,
-      editor.getModel()!,
-      new Set([editor]),
-      provider.awareness
-    );
-    bindingRef.current = binding;
+    if (model) {
+      // 1. FORCE Monaco to use pure LF (\n) on ALL operating systems (Windows/Mac/Linux/Mobile)
+      model.setEOL(monaco.editor.EndOfLineSequence.LF);
+
+      // 2. ONE-TIME CLEANUP: Purge legacy \r characters from the CRDT state before binding
+      const currentContent = yText.toString();
+      if (currentContent.includes('\r')) {
+        ydoc.transact(() => {
+          let idx = 0;
+          while (idx < yText.length) {
+            if (yText.toString()[idx] === '\r') {
+              yText.delete(idx, 1);
+            } else {
+              idx++;
+            }
+          }
+        });
+      }
+
+      // 3. Connect text sync and awareness vectors using native y-monaco bindings
+      const binding = new MonacoBinding(
+        yText,
+        model,
+        new Set([editor]),
+        provider.awareness
+      );
+      bindingRef.current = binding;
+    }
 
     // Generate style overrides matching the client IDs managed by y-monaco
     const handleAwarenessStyleUpdate = () => {
@@ -84,7 +106,7 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
 
     return () => {
       provider.awareness.off('change', handleAwarenessStyleUpdate);
-      binding.destroy();
+      bindingRef.current?.destroy();
       editor.dispose();
       styleTag.remove();
     };
