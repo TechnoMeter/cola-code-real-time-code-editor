@@ -23,7 +23,7 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
     styleTag.id = 'yjs-native-cursor-styles';
     document.head.appendChild(styleTag);
 
-    // Initialize Monaco using a standardized font setup to eliminate layout drift
+    // Initialize Monaco using a standardized layout setup
     const editor = monaco.editor.create(containerRef.current, {
       value: '',
       language: 'typescript',
@@ -46,26 +46,30 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
     const model = editor.getModel();
     const yText = ydoc.getText('monaco-content');
 
-    if (model) {
-      // 1. FORCE Monaco to use pure LF (\n) on ALL operating systems (Windows/Mac/Linux/Mobile)
-      model.setEOL(monaco.editor.EndOfLineSequence.LF);
-
-      // 2. ONE-TIME CLEANUP: Purge legacy \r characters from the CRDT state before binding
-      const currentContent = yText.toString();
-      if (currentContent.includes('\r')) {
+    // Real-Time CRDT Guard: Intercepts mobile IME / paste events and purges \r in real-time
+    const sanitizeCRLF = () => {
+      const str = yText.toString();
+      if (str.includes('\r')) {
         ydoc.transact(() => {
-          let idx = 0;
-          while (idx < yText.length) {
-            if (yText.toString()[idx] === '\r') {
-              yText.delete(idx, 1);
-            } else {
-              idx++;
+          // Iterate backwards to safely delete \r without index shifting
+          for (let i = str.length - 1; i >= 0; i--) {
+            if (str[i] === '\r') {
+              yText.delete(i, 1);
             }
           }
-        });
+        }, 'sanitize-crlf');
       }
+    };
 
-      // 3. Connect text sync and awareness vectors using native y-monaco bindings
+    // Run initial purge and attach real-time observer to yText
+    sanitizeCRLF();
+    yText.observe(sanitizeCRLF);
+
+    if (model) {
+      // Force Monaco to use pure LF (\n) on ALL operating systems
+      model.setEOL(monaco.editor.EndOfLineSequence.LF);
+
+      // Connect text sync and awareness vectors using native y-monaco bindings
       const binding = new MonacoBinding(
         yText,
         model,
@@ -79,7 +83,7 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
     const handleAwarenessStyleUpdate = () => {
       const styleRules: string[] = [];
       provider.awareness.getStates().forEach((state: any, clientId: number) => {
-        if (clientId === provider.awareness.clientID) return; // Ignore the local client instance
+        if (clientId === provider.awareness.clientID) return; // Ignore local client instance
         if (!state.user) return;
 
         const color = state.user.color || '#3b82f6';
@@ -105,6 +109,7 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
     handleAwarenessStyleUpdate();
 
     return () => {
+      yText.unobserve(sanitizeCRLF);
       provider.awareness.off('change', handleAwarenessStyleUpdate);
       bindingRef.current?.destroy();
       editor.dispose();
