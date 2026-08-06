@@ -18,12 +18,12 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
   useEffect(() => {
     if (!containerRef.current || !ydoc || !provider) return;
 
-    // Create a dynamic style element to house client-specific styles
+    // Inject dynamic remote cursor styles
     const styleTag = document.createElement('style');
     styleTag.id = 'yjs-native-cursor-styles';
     document.head.appendChild(styleTag);
 
-    // Initialize Monaco using a standardized layout setup
+    // Initialize Monaco with standardized layout
     const editor = monaco.editor.create(containerRef.current, {
       value: '',
       language: 'typescript',
@@ -36,40 +36,30 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
       scrollbar: { useShadows: false, verticalHasArrows: false },
       padding: { top: 16 },
       contextmenu: false,
-      eol: '\n', // Set default editor newline behavior
+      eol: '\n', // Default to LF line endings
+      quickSuggestions: { other: true, comments: false, strings: false },
     });
     editorRef.current = editor;
 
-    // Force an immediate layout bounds recalculation
     setTimeout(() => editor.layout(), 50);
 
     const model = editor.getModel();
     const yText = ydoc.getText('monaco-content');
 
-    // Real-Time CRDT Guard: Intercepts mobile IME / paste events and purges \r in real-time
-    const sanitizeCRLF = () => {
-      const str = yText.toString();
-      if (str.includes('\r')) {
-        ydoc.transact(() => {
-          // Iterate backwards to safely delete \r without index shifting
-          for (let i = str.length - 1; i >= 0; i--) {
-            if (str[i] === '\r') {
-              yText.delete(i, 1);
-            }
-          }
-        }, 'sanitize-crlf');
-      }
-    };
-
-    // Run initial purge and attach real-time observer to yText
-    sanitizeCRLF();
-    yText.observe(sanitizeCRLF);
-
     if (model) {
-      // Force Monaco to use pure LF (\n) on ALL operating systems
+      // 1. Enforce LF (\n) on Monaco model
       model.setEOL(monaco.editor.EndOfLineSequence.LF);
 
-      // Connect text sync and awareness vectors using native y-monaco bindings
+      // 2. Intercept raw Android IME / paste input in Monaco BEFORE reaching Yjs
+      const contentListener = model.onDidChangeContent((e) => {
+        if (e.isFlush) return;
+        const val = model.getValue();
+        if (val.includes('\r')) {
+          model.setValue(val.replace(/\r/g, ''));
+        }
+      });
+
+      // 3. Connect y-monaco binding
       const binding = new MonacoBinding(
         yText,
         model,
@@ -77,13 +67,34 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
         provider.awareness
       );
       bindingRef.current = binding;
+
+      // 4. Safe post-sync cleanup: Runs ONLY AFTER y-websocket initial sync finishes
+      const handleSynced = (isSynced: boolean) => {
+        if (!isSynced) return;
+        const str = yText.toString();
+        if (str.includes('\r')) {
+          ydoc.transact(() => {
+            for (let i = str.length - 1; i >= 0; i--) {
+              if (str[i] === '\r') {
+                yText.delete(i, 1);
+              }
+            }
+          }, 'crlf-post-sync-clean');
+        }
+      };
+
+      if (provider.synced) {
+        handleSynced(true);
+      } else {
+        provider.once('synced', handleSynced);
+      }
     }
 
-    // Generate style overrides matching the client IDs managed by y-monaco
+    // Dynamic Awareness Cursor Styles
     const handleAwarenessStyleUpdate = () => {
       const styleRules: string[] = [];
       provider.awareness.getStates().forEach((state: any, clientId: number) => {
-        if (clientId === provider.awareness.clientID) return; // Ignore local client instance
+        if (clientId === provider.awareness.clientID) return;
         if (!state.user) return;
 
         const color = state.user.color || '#3b82f6';
@@ -109,7 +120,6 @@ export function EditorContainer({ ydoc, provider, theme }: EditorContainerProps)
     handleAwarenessStyleUpdate();
 
     return () => {
-      yText.unobserve(sanitizeCRLF);
       provider.awareness.off('change', handleAwarenessStyleUpdate);
       bindingRef.current?.destroy();
       editor.dispose();
