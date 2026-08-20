@@ -188,7 +188,7 @@ These trade‑offs are well understood and inform our future roadmap (see below)
 
 ### High‑Level Folder Tree
 
-```text
+```t
 colacode/
 ├── api/
 │   └── generate.py             # Serverless FastAPI AI code generator endpoint
