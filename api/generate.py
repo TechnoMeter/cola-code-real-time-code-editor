@@ -2,12 +2,22 @@ import os
 import re
 from typing import TypedDict, Annotated, Sequence
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END, add_messages
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 app = FastAPI()
+
+# Enable CORS for browser requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class GenerateRequest(BaseModel):
     prompt: str

@@ -1,0 +1,5 @@
+[[redirects]]
+  from = "/api/generate"
+  to = "https://cola-code-real-time-code-editor-six.vercel.app/api/generate"
+  status = 200
+  force = true
