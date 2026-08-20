@@ -20,7 +20,7 @@
 <img src="https://img.shields.io/badge/Vite-5.0-646CFF.svg?style=flat-square&logo=vite&logoColor=white" alt="Vite">
 <img src="https://img.shields.io/badge/TailwindCSS-4.0-38BDF8.svg?style=flat-square&logo=tailwind-css&logoColor=white" alt="TailwindCSS">
 
-<br>
+<br><br>
 
 **Live Demo:** [https://colacode.netlify.app](https://colacode.netlify.app)
 
@@ -29,17 +29,16 @@
 ---
 
 <p align="center">
-  <img src="docs/1.png" alt="Main UI" width="800">
-  <br>
-  <em>The ColaCode editor.</em>
+  <img src="docs/1.png" alt="Main UI" width="800">
+  <br>
+  <em>The ColaCode editor interface.</em>
 </p>
 
 <p align="center">
-  <img src="docs/2.gif" alt="AI Copilot in Action" width="800">
-  <br>
-  <em>AI Copilot generating code from a prompt – inserted directly at the cursor.</em>
+  <img src="docs/2.gif" alt="AI Copilot in Action" width="800">
+  <br>
+  <em>AI Copilot generating code from a prompt – inserted directly at the cursor.</em>
 </p>
-
 
 ---
 
@@ -66,53 +65,53 @@ The architecture cleanly separates the high‑frequency WebSocket sync layer fro
 
 ```mermaid
 flowchart TD
-    classDef frontend fill:#61dafb,stroke:#333,stroke-width:2px,color:#000;
-    classDef backend fill:#339933,stroke:#333,stroke-width:2px,color:#fff;
-    classDef ai fill:#000000,stroke:#333,stroke-width:2px,color:#fff;
-    classDef db fill:#336791,stroke:#333,stroke-width:2px,color:#fff;
-    classDef cache fill:#DC382D,stroke:#333,stroke-width:2px,color:#fff;
+    classDef frontend fill:#61dafb,stroke:#333,stroke-width:2px,color:#000;
+    classDef backend fill:#339933,stroke:#333,stroke-width:2px,color:#fff;
+    classDef ai fill:#000000,stroke:#333,stroke-width:2px,color:#fff;
+    classDef db fill:#336791,stroke:#333,stroke-width:2px,color:#fff;
+    classDef cache fill:#DC382D,stroke:#333,stroke-width:2px,color:#fff;
 
-    subgraph Clients ["1. Client Tier"]
-        ClientA["Client A<br/>(React + Monaco + Yjs)"]:::frontend
-        ClientB["Client B<br/>(React + Monaco + Yjs)"]:::frontend
-    end
+    subgraph Clients ["1. Client Tier"]
+        ClientA["Client A<br/>(React + Monaco + Yjs)"]:::frontend
+        ClientB["Client B<br/>(React + Monaco + Yjs)"]:::frontend
+    end
 
-    subgraph Gateway ["2. WebSocket Gateway (Node.js)"]
-        WS1["Sync Server Instance 1"]:::backend
-        WS2["Sync Server Instance 2"]:::backend
-    end
-    
-    subgraph AITier ["3. Agentic Workflow"]
-        LangGraph["LangGraph Service<br/>(Python/FastAPI)"]:::ai
-    end
+    subgraph Gateway ["2. WebSocket Gateway (Node.js)"]
+        WS1["Sync Server Instance 1"]:::backend
+        WS2["Sync Server Instance 2"]:::backend
+    end
+    
+    subgraph AITier ["3. Serverless AI Endpoint"]
+        VercelAI["Vercel Serverless Function<br/>(Python / FastAPI / LangGraph)"]:::ai
+    end
 
-    subgraph State ["4. State & Persistence"]
-        Redis[("Upstash Redis<br/>(Pub/Sub & Hot Cache)")]:::cache
-        PG[("Neon PostgreSQL<br/>(Cold Binary Storage)")]:::db
-    end
+    subgraph State ["4. State & Persistence"]
+        Redis[("Upstash Redis<br/>(Pub/Sub & Hot Cache)")]:::cache
+        PG[("Neon PostgreSQL<br/>(Cold Binary Storage)")]:::db
+    end
 
-    ClientA <-->|"Yjs Uint8Array Sync"| WS1
-    ClientB <-->|"Yjs Uint8Array Sync"| WS2
-    
-    WS1 <-->|"Broadcast Updates"| Redis
-    WS2 <-->|"Broadcast Updates"| Redis
-    
-    WS1 -.->|"Trigger AI (via Redis Pub/Sub)"| LangGraph
-    LangGraph <-->|"Headless WS Client (y-py)"| WS1
-    
-    Redis -.->|"OnRoomClose / cron (Flush)"| PG
+    ClientA <-->|"Yjs Uint8Array Sync (WebSocket)"| WS1
+    ClientB <-->|"Yjs Uint8Array Sync (WebSocket)"| WS2
+    
+    ClientA -->|"HTTP POST /api/generate"| VercelAI
+    ClientB -->|"HTTP POST /api/generate"| VercelAI
+    
+    WS1 <-->|"Broadcast Updates"| Redis
+    WS2 <-->|"Broadcast Updates"| Redis
+    
+    Redis -.->|"OnRoomClose / Flush"| PG
 ```
 
 ### Deployment Architecture (Production)
 
-| Component          | Hosting Platform | Purpose                                                                 |
-| :----------------- | :--------------- | :---------------------------------------------------------------------- |
-| **Frontend**       | Netlify          | Serves the React + Monaco editor with real‑time collaboration UI.      |
-| **Sync Gateway**   | Render (Docker)  | Node.js WebSocket server handling Yjs sync, awareness, and Redis Pub/Sub. |
-| **AI Copilot**     | Render (Docker)  | Python FastAPI + LangGraph worker, connected via WebSocket to the gateway. |
-| **PostgreSQL**     | Neon Serverless  | Cold storage for Yjs document snapshots (binary `BYTEA`).               |
-| **Redis**          | Upstash          | Pub/Sub backplane and hot cache for active rooms.                      |
-| **Uptime Monitor** | UptimeRobot      | Keeps Render services alive by pinging every 5 minutes.               |
+| Component | Hosting Platform | Purpose |
+| :--- | :--- | :--- |
+| **Frontend** | Netlify / Vercel | Serves the React + Monaco editor with real-time collaboration UI. |
+| **Sync Gateway** | Render (Docker) | Node.js WebSocket server handling Yjs sync, awareness, and Redis Pub/Sub. |
+| **AI Copilot** | Vercel Serverless (`@vercel/python`) | On-demand Python FastAPI endpoint invoking Gemini & LangGraph. |
+| **PostgreSQL** | Neon Serverless | Cold storage for Yjs document snapshots (binary `BYTEA`). |
+| **Redis** | Upstash | Pub/Sub backplane and hot cache for active sync gateway instances. |
+| **Uptime Monitor** | UptimeRobot | Keeps `colacode-sync` awake by pinging its endpoint every 5 minutes. |
 
 ---
 
@@ -164,9 +163,9 @@ These trade‑offs are well understood and inform our future roadmap (see below)
 
 ### 4. Local WASM Execution Sandbox
 - Run code directly in the browser with zero server dependency:
-  - **JavaScript / TypeScript** via a Web Worker.
-  - **Python** via Pyodide.
-  - **SQL** via SQL.js.
+  - **JavaScript / TypeScript** via a Web Worker.
+  - **Python** via Pyodide.
+  - **SQL** via SQL.js.
 - Output is displayed in a dedicated terminal panel, with tabular results for SQL queries.
 
 ### 5. Multi‑Cursor & Awareness
@@ -189,39 +188,30 @@ These trade‑offs are well understood and inform our future roadmap (see below)
 
 ### High‑Level Folder Tree
 
-```
+```t
 colacode/
-├── .github/workflows/         # Optional keep‑alive workflow
-├── frontend/                  # React + Vite + TailwindCSS
-│   ├── src/
-│   │   ├── App.tsx            # Main app (UI, hooks, AI modal, WASM execution)
-│   │   ├── main.tsx           # Entry point
-│   │   └── index.css          # Global styles
-│   ├── Dockerfile             # Multi‑stage build for production
-│   ├── package.json           # Dependencies & build script
-│   ├── tsconfig.json          # TypeScript config (no project references)
-│   └── nginx.conf             # Nginx config for serving build
-├── backend-sync/              # Node.js WebSocket Gateway
-│   ├── src/
-│   │   ├── server.ts          # WebSocket server, Redis Pub/Sub, room lifecycle
-│   │   ├── persistence.ts     # PostgreSQL flushing (binary BYTEA)
-│   │   └── (test files)       # Integration tests
-│   ├── Dockerfile
-│   ├── package.json
-│   └── tsconfig.json
-├── backend-ai/                # Python LangGraph Microservice
-│   ├── src/
-│   │   ├── main.py            # FastAPI + Redis discovery supervisor
-│   │   ├── agent.py           # LangGraph agent with system prompt
-│   │   └── yjs_client.py      # Headless Yjs client (handshake, macro parser)
-│   ├── Dockerfile
-│   └── requirements.txt
-├── infrastructure/            # Local development setup
-│   └── init.sql               # PostgreSQL schema & initialisation  
-├── .env.example               # Environment variable template
-├── .dockerignore
-├── docker-compose.yml         # All services for local testing
-└── README.md                  # This file
+├── api/
+│   └── generate.py             # Serverless FastAPI AI code generator endpoint
+├── frontend/                   # React + Vite + TailwindCSS
+│   ├── src/
+│   │   ├── App.tsx             # Main app UI, session persistence, WASM execution
+│   │   ├── main.tsx            # Entry point
+│   │   └── index.css           # Global styles
+│   ├── netlify.toml            # Proxy rewriter routing /api/generate to Vercel
+│   ├── package.json
+│   └── tsconfig.json
+├── backend-sync/               # Node.js WebSocket Gateway
+│   ├── src/
+│   │   ├── server.ts           # WebSocket server, Redis Pub/Sub, room lifecycle
+│   │   └── persistence.ts      # PostgreSQL flushing (binary BYTEA)
+│   ├── Dockerfile
+│   └── package.json
+├── infrastructure/             # Local development setup
+│   └── init.sql                # PostgreSQL schema
+├── requirements.txt            # Root dependencies for Vercel Python runtime
+├── vercel.json                 # Vercel routing & build configuration
+├── docker-compose.yml          # Local container orchestration
+└── README.md
 ```
 
 ### 🧠 Key Logic Deep‑Dive: The Most Complex Parts
@@ -231,21 +221,20 @@ colacode/
 - **Redis Pub/Sub:** All sync instances subscribe to `doc-update-{room}` channels. When a client sends an update, the server broadcasts it to other clients in the same instance and publishes it to Redis so that other instances receive it.
 - **Protocol Parsing:** The server handles Yjs sync messages (step 1, step 2, update) and awareness messages, all using `lib0` varuint encoding. Malformed packets are caught and dropped without crashing the process.
 
-#### 2. `backend-ai/src/yjs_client.py` – Headless Yjs Client
+<comment-tag id="3">#### 2. `backend-ai/src/yjs_client.py` – Headless Yjs Client</comment-tag id="3" text="This header references the old standalone backend-ai WebSocket worker. Since AI generation was migrated to the Vercel serverless function api/generate.py, this heading should be updated to reflect the new serverless endpoint logic." type="suggestion">
 - **Handshake:** Sends a `syncStep1` message with an empty state vector to the sync gateway, then responds to `syncStep2` with its own state. This establishes a real‑time Yjs connection.
 - **Macro Detection:** Scans the document text for the regex `/\*\s*@AI\s+(.*?)\s*\*/` after every incoming update.
 - **Atomic Injection:** When a macro is found, it replaces the macro with a status marker, then asynchronously calls the LangGraph agent. The generated code is inserted as a single CRDT delta, preserving cursor positions for other users.
 - **Error Resilience:** The worker retries connections up to 5 times with exponential backoff. All exceptions are logged and do not crash the main async loop.
 
-#### 3. `frontend/src/App.tsx` – The React Monolith
-- **Monaco Integration:** The `EditorContainer` uses `y-monaco` to bind a Yjs text type to the Monaco editor model. Remote cursors are rendered with dynamic CSS that injects `::after` pseudo‑elements for user names.
-- **AI Button & Modal:** The purple `AI` button opens a modal. On submission, the prompt is wrapped as `/* @AI {prompt} */` and inserted at the current Monaco cursor position using `executeEdits`. The macro is then automatically processed by the AI worker.
-- **WASM Execution:** The `runJavaScript`, `runPython`, and `runSQL` functions spawn Web Workers or use Pyodide/SQL.js to execute code in‑browser. Output is streamed to the terminal panel, with table rendering for SQL.
+#### 3. Serverless AI Copilot (LangGraph + Gemini)
+- Triggered directly from the UI header or prompt modal.
+- Dispatches an HTTP request to `/api/generate`.
+- The Vercel serverless Python endpoint processes the surrounding code context through a LangGraph agent and returns sanitized raw code, which is atomically inserted into Monaco without affecting active cursor positions.
 
-#### 4. `backend-ai/src/agent.py` – LangGraph Agent
-- **System Prompt:** Forces the model to output **raw code only** – no markdown, no explanations. This ensures the AI’s response is directly valid as code.
-- **Graph:** Single‑node graph that invokes the Gemini model with streaming. The response is returned as a LangChain message, which is then converted to a string in `yjs_client.py`.
-- **Model Flexibility:** The agent can be swapped with any OpenAI‑compatible endpoint (e.g., Groq, Claude via API) by changing the `ChatGoogleGenerativeAI` import to `ChatOpenAI`.
+#### 4. Session Persistence & 1-Click Room Sharing
+- Rooms use `sessionStorage` to maintain active state across browser refreshes without causing tab collision errors across tabs.
+- Clicking the header **Share Room** button generates a clean deep-link URL (`?room=room-id`) that pre-fills the workspace ID for new collaborators.
 
 ---
 
@@ -271,23 +260,23 @@ docker exec -i colacode-postgres psql -U postgres -d colacode < infrastructure/i
 ```bash
 cd backend-sync
 npm install
-npm run dev   # Uses tsx for hot reload
+npm run dev   # Uses tsx for hot reload
 ```
 
-### 4. Run the AI Worker (Optional, requires API key)
+<comment-tag id="4">### 4. Run the AI Worker (Optional, requires API key)
 ```bash
 cd backend-ai
 python -m venv venv
-source venv/bin/activate   # On Windows: venv\Scripts\activate
+source venv/bin/activate   # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn src.main:app --reload
-```
+```</comment-tag id="4" text="Update local development steps to instruct running uvicorn api.generate:app --reload from the root folder, since backend-ai/ has been replaced by api/generate.py and root requirements.txt." type="suggestion">
 
 ### 5. Start the Frontend (React)
 ```bash
 cd frontend
 npm install
-npm run dev   # Vite dev server on http://localhost:5173
+npm run dev   # Vite dev server on http://localhost:5173
 ```
 
 ### 6. Set Environment Variables
@@ -305,7 +294,7 @@ REDIS_URL=redis://localhost:6379
 
 # AI (Gemini)
 LLM_API_KEY=your_gemini_api_key
-LLM_MODEL=gemini-2.0-flash-lite
+LLM_MODEL=gemini-3.1-flash-lite
 LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
 
 # Frontend (optional, for dev)
@@ -314,17 +303,17 @@ VITE_WS_URL=ws://localhost:3000
 
 ---
 
-## ☁️ Production Deployment (Free)
+## ☁️ Production Deployment
 
 All services are deployed on free tiers of popular platforms. Here’s how to replicate.
 
 ### Prerequisites
 - GitHub repository (private or public).
 - Accounts on:
-  - [Render](https://render.com) (for PostgreSQL, sync gateway, AI worker)
-  - [Upstash](https://upstash.com) (for Redis)
-  - [Netlify](https://netlify.com) or [Vercel](https://vercel.com) (for frontend)
-  - [UptimeRobot](https://uptimerobot.com) (optional, to keep services awake)
+<comment-tag id="2">  - [Render](https://render.com) (for PostgreSQL, sync gateway, AI worker)</comment-tag id="2" text="Update this prerequisite list item because Render is now only hosting the sync gateway (PostgreSQL is hosted on Neon, and AI Copilot is on Vercel). Recommended edit: '- [Render](https://render.com) (for sync gateway)'" type="suggestion">
+  - [Upstash](https://upstash.com) (for Redis)
+  - [Netlify](https://netlify.com) or [Vercel](https://vercel.com) (for frontend)
+  - [UptimeRobot](https://uptimerobot.com) (optional, to keep services awake)
 
 ### Step 1 – PostgreSQL (Neon)
 - Sign up at [Neon.tech](https://neon.tech) and create a project named `colacode`.
@@ -344,65 +333,62 @@ All services are deployed on free tiers of popular platforms. Here’s how to re
 - **New Web Service** → connect GitHub repo.
 - Set **Root Directory** to `backend-sync`.
 - Add environment variables (from steps 1 & 2):
-  ```
-  PORT=3000
-  PG_USER=...
-  PG_PASSWORD=...
-  PG_HOST=...
-  PG_DB=...
-  PG_PORT=5432
-  REDIS_URL=rediss://...
-  ```
+  ```env
+  PORT=3000
+  PG_USER=...
+  PG_PASSWORD=...
+  PG_HOST=...
+  PG_DB=...
+  PG_PORT=5432
+  REDIS_URL=rediss://...
+  ```
 - Deploy. Get the public URL (e.g., `https://colacode-sync.onrender.com`).
 
-### Step 4 – AI Copilot (Render – Docker)
-- **New Web Service** → same repo, **Root Directory** = `backend-ai`.
-- Add environment variables:
-  ```
-  REDIS_URL=rediss://...
-  LLM_API_KEY=your_gemini_key
-  LLM_MODEL=gemini-2.0-flash-lite
-  SYNC_GATEWAY_URL=wss://colacode-sync.onrender.com   # public WS URL
-  ```
-- Deploy. Get its URL (e.g., `https://colacode-ai.onrender.com`).
+### Step 4 – AI Copilot (Vercel Serverless)
+- Import repository into Vercel, ensuring the root directory is set to the repository root.
+- Add Environment Variables in **Vercel Dashboard** → **Settings** → **Environment Variables**:
+  ```env
+  LLM_API_KEY=your_gemini_api_key
+  LLM_MODEL=gemini-2.0-flash-lite
+  ```
 
-### Step 5 – Frontend (Netlify / Vercel)
-- Import the same repo.
-- Set **Base Directory** / **Root Directory** = `frontend`.
-- Build command: `npm run build` (or let the platform auto‑detect Vite).
-- Publish directory: `dist`.
-- Add environment variable:
-  ```
-  VITE_WS_URL=wss://colacode-sync.onrender.com
-  ```
+### Step 5 – Frontend Proxy Rewriter (Netlify)
+- Add `netlify.toml` inside `frontend/` (or repository root) to proxy requests and eliminate CORS:
+```toml
+[[redirects]]
+  from = "/api/generate"
+  to = "https://cola-code-real-time-code-editor-six.vercel.app/api/generate"
+  status = 200
+  force = true
+```
 - Deploy. Your app will be live (e.g., `https://colacode.netlify.app`).
 
 ### Step 6 – Keep Services Alive (UptimeRobot or GitHub Actions)
 Render free services sleep after 15 minutes of inactivity. To prevent cold starts:
-- Create **two monitors** in UptimeRobot (or use GitHub Actions) pinging:
-  - `https://colacode-sync.onrender.com/health` (or `/`)
-  - `https://colacode-ai.onrender.com/health`
+<comment-tag id="1">- Create **two monitors** in UptimeRobot (or use GitHub Actions) pinging:
+  - `https://colacode-sync.onrender.com/health`
+  - `https://colacode-ai.onrender.com/health`</comment-tag id="1" text="You are correct! Since the AI Copilot was moved to Vercel Serverless (/api/generate), there is no colacode-ai service on Render anymore. You only need one UptimeRobot monitor pinging https://colacode-sync.onrender.com/health." type="suggestion">
 - Set interval to **5 minutes**.
 
 ---
 
 ## 🔧 Environment Variables Reference
 
-| Variable               | Used By              | Description                                                                               |
-| :--------------------- | :------------------- | :---------------------------------------------------------------------------------------- |
-| `PORT`                 | Sync Gateway         | Port for the WebSocket server (default 3000).                                             |
-| `PG_USER`              | Sync Gateway         | PostgreSQL username.                                                                      |
-| `PG_PASSWORD`          | Sync Gateway         | PostgreSQL password.                                                                      |
-| `PG_DB`                | Sync Gateway         | PostgreSQL database name.                                                                 |
-| `PG_HOST`              | Sync Gateway         | PostgreSQL host (e.g., `ep-xxx-pooler.c-4.region.aws.neon.tech`).                         |
-| `PG_PORT`              | Sync Gateway         | PostgreSQL port (default 5432).                                                           |
-| `REDIS_URL`            | Sync Gateway, AI     | Redis connection string (Upstash: `rediss://...`).                                        |
-| `LLM_API_KEY`          | AI Worker            | Google Gemini (or OpenAI‑compatible) API key.                                             |
-| `LLM_MODEL`            | AI Worker            | Model name (e.g., `gemini-2.0-flash-lite`).                                               |
-| `SYNC_GATEWAY_URL`     | AI Worker            | Public WebSocket URL of the sync gateway (e.g., `wss://colacode-sync.onrender.com`).      |
-| `VITE_WS_URL`          | Frontend (build)     | WebSocket URL for the sync gateway (browser connects to this).                           |
+| Variable | Used By | Description |
+| :--- | :--- | :--- |
+| `PORT` | Sync Gateway | Port for the WebSocket server (default 3000). |
+| `PG_HOST` | Sync Gateway | Neon PostgreSQL host endpoint. |
+| `PG_USER` | Sync Gateway | PostgreSQL database user. |
+| `PG_PASSWORD` | Sync Gateway | PostgreSQL database password. |
+| `PG_DB` | Sync Gateway | Database name. |
+| `PG_PORT` | Sync Gateway | Database port (default 5432). |
+| `REDIS_URL` | Sync Gateway | Upstash Redis connection string (`rediss://...`). |
+| `LLM_API_KEY` | Vercel Function | Google Gemini API key. |
+| `LLM_MODEL` | Vercel Function | Gemini model ID (`gemini-2.0-flash-lite`). |
+| `VITE_WS_URL` | Frontend | WebSocket endpoint for the Render sync gateway (`wss://...`). |
+| `VITE_AI_SERVICE_URL` | Frontend (Optional) | Explicit serverless API target (defaults to `/api/generate`). |
 
-> **Note:** The AI worker uses `SYNC_GATEWAY_URL` to connect to the sync gateway via WebSocket. The frontend uses `VITE_WS_URL` (injected at build time) for the same purpose.
+<comment-tag id="5">> **Note:** The AI worker uses `SYNC_GATEWAY_URL` to connect to the sync gateway via WebSocket. The frontend uses `VITE_WS_URL` (injected at build time) for the same purpose.</comment-tag id="5" text="This note mentions SYNC_GATEWAY_URL for a WebSocket AI worker, which is obsolete now that AI is invoked via HTTP request to /api/generate. Updating or removing this note will keep the documentation accurate." type="suggestion">
 
 ---
 
