@@ -1,11 +1,10 @@
 import os
 import re
-from typing import TypedDict, Annotated, Sequence
+from typing import TypedDict, Annotated, Sequence, Union, List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
-from langgraph.graph import StateGraph, END, add_messages
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 app = FastAPI()
@@ -31,6 +30,22 @@ CRITICAL INSTRUCTIONS:
 2. Do NOT wrap your response inside markdown code blocks (e.g., do NOT use ```typescript or ```).
 3. Do NOT provide inline conversational commentary, introductory summaries, or markdown notes.
 4. Produce raw code characters only."""
+
+def extract_text_from_content(content: Union[str, List[Any]]) -> str:
+    """Extracts raw text whether LLM content is a string or a list of structured blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts = []
+        for part in content:
+            if isinstance(part, str):
+                text_parts.append(part)
+            elif isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(part.get("text", ""))
+            elif hasattr(part, "text"):
+                text_parts.append(getattr(part, "text", ""))
+        return "".join(text_parts)
+    return str(content)
 
 def sanitize_llm_code(text: str) -> str:
     cleaned = text.strip()
@@ -59,9 +74,11 @@ async def generate_code(req: GenerateRequest):
         ]
         
         response = await llm.ainvoke(messages)
-        raw_content = str(response.content) if hasattr(response, 'content') else str(response)
         
-        cleaned_code = sanitize_llm_code(raw_content)
+        # Extract plain text from string or structured content block list
+        raw_text = extract_text_from_content(response.content) if hasattr(response, 'content') else str(response)
+        
+        cleaned_code = sanitize_llm_code(raw_text)
         cleaned_code = cleaned_code.replace('\r\n', '\n').replace('\r', '')
         
         return {"code": cleaned_code}
