@@ -233,6 +233,7 @@ export default function App() {
   // AI Prompt Modal State
   const [showPromptModal, setShowPromptModal] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [isAiGenerating, setIsAiGenerating] = useState(false);
 
   // Execution State
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
@@ -313,33 +314,80 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  // --- AI Prompt Handler ---
-  const handleAIPrompt = () => {
-    if (!editorRef.current) return;
+  // --- Serverless AI Prompt Handler ---
+  const handleAIPrompt = async () => {
+    if (!editorRef.current || !ydoc) return;
     const prompt = aiPrompt.trim();
     if (!prompt) return;
 
-    // Insert the macro at the current cursor position
     const editor = editorRef.current;
     const position = editor.getPosition();
     if (!position) return;
 
-    const macro = `/* @AI ${prompt} */`;
+    const currentCode = ydoc.getText('monaco-content').toString();
+    const placeholder = `/* [AI Copilot generating code for: '${prompt.slice(0, 20)}...'] */`;
+
+    // 1. Insert temporary placeholder macro into Monaco
     editor.executeEdits('ai-prompt', [{
       range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
-      text: macro,
+      text: placeholder,
     }]);
-
-    // Move cursor after the inserted macro
-    const newPos = new monaco.Position(position.lineNumber, position.column + macro.length);
-    editor.setPosition(newPos);
-    editor.focus();
 
     setAiPrompt('');
     setShowPromptModal(false);
+    setIsAiGenerating(true);
+
+    try {
+      const aiApiEndpoint = import.meta.env.VITE_AI_SERVICE_URL || '/api/generate';
+      const response = await fetch(aiApiEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, context: currentCode }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ detail: 'API request failed' }));
+        throw new Error(errData.detail || 'Failed to generate code.');
+      }
+
+      const data = await response.json();
+      const generatedCode = data.code;
+
+      // 2. Replace placeholder macro with generated code
+      const model = editor.getModel();
+      if (model) {
+        const fullText = model.getValue();
+        const pIdx = fullText.indexOf(placeholder);
+        if (pIdx !== -1) {
+          const startPos = model.getPositionAt(pIdx);
+          const endPos = model.getPositionAt(pIdx + placeholder.length);
+          editor.executeEdits('ai-replace', [{
+            range: new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column),
+            text: `\n${generatedCode}\n`,
+          }]);
+        }
+      }
+    } catch (err: any) {
+      console.error('AI Generation Error:', err);
+      const model = editor.getModel();
+      if (model) {
+        const fullText = model.getValue();
+        const pIdx = fullText.indexOf(placeholder);
+        if (pIdx !== -1) {
+          const startPos = model.getPositionAt(pIdx);
+          const endPos = model.getPositionAt(pIdx + placeholder.length);
+          editor.executeEdits('ai-error', [{
+            range: new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column),
+            text: `\n/* [AI Generation Error: ${err.message}] */\n`,
+          }]);
+        }
+      }
+    } finally {
+      setIsAiGenerating(false);
+    }
   };
 
-  // Execution Logic (unchanged)
+  // Execution Logic
   const runJavaScript = (code: string): Promise<string> => {
     return new Promise((resolve, reject) => {
       const workerBlob = new Blob([`
@@ -458,7 +506,7 @@ export default function App() {
             <div className="space-y-6">
               {[
                 { icon: Users, title: "Sub-50ms CRDT Sync", desc: "True real-time collaboration with precise cursor tracking." },
-                { icon: Sparkles, title: "AI Copilot Integration", desc: "Click the AI button or type /* @AI ... */ to generate code." },
+                { icon: Sparkles, title: "AI Copilot Integration", desc: "Click the AI button or generate code seamlessly with Gemini." },
                 { icon: Terminal, title: "Local WASM Execution", desc: "Run Python, Node, and SQL natively in your browser sandbox." }
               ].map((Feature, i) => (
                 <div key={i} className="flex gap-4 items-start p-4 rounded-2xl bg-white/30 dark:bg-white/5 backdrop-blur-md border border-white/40 dark:border-white/10 shadow-sm hover:bg-white/40 dark:hover:bg-white/10 transition-colors">
@@ -577,11 +625,12 @@ export default function App() {
           {/* AI Button */}
           <button
             onClick={() => setShowPromptModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/20 dark:bg-purple-500/30 backdrop-blur-md border border-purple-400/30 dark:border-purple-400/20 text-purple-800 dark:text-purple-300 hover:bg-purple-500/30 dark:hover:bg-purple-500/40 font-bold text-sm transition-all shadow-sm"
+            disabled={isAiGenerating}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/20 dark:bg-purple-500/30 backdrop-blur-md border border-purple-400/30 dark:border-purple-400/20 text-purple-800 dark:text-purple-300 hover:bg-purple-500/30 dark:hover:bg-purple-500/40 font-bold text-sm transition-all shadow-sm disabled:opacity-50"
             title="AI Copilot"
           >
-            <Sparkles size={16} />
-            <span className="hidden sm:inline">AI</span>
+            {isAiGenerating ? <Loader2 size={16} className="animate-spin text-purple-600 dark:text-purple-300" /> : <Sparkles size={16} />}
+            <span className="hidden sm:inline">{isAiGenerating ? 'Generating...' : 'AI'}</span>
           </button>
 
           <button
@@ -753,7 +802,7 @@ export default function App() {
                 </button>
                 <button
                   onClick={handleAIPrompt}
-                  disabled={!aiPrompt.trim()}
+                  disabled={!aiPrompt.trim() || isAiGenerating}
                   className="px-6 py-2.5 rounded-xl bg-purple-600/90 dark:bg-purple-600/80 hover:bg-purple-600 dark:hover:bg-purple-500 backdrop-blur-md text-white font-bold shadow-[0_4px_15px_rgba(147,51,234,0.3)] border border-purple-400/50 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Send size={18} />
@@ -765,7 +814,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Guide Modal – updated to mention AI button */}
+      {/* Guide Modal */}
       {showGuide && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 dark:bg-slate-900/60 backdrop-blur-md p-4 sm:p-6 animate-in fade-in duration-200">
           <div className="bg-white/70 dark:bg-[#0f172a]/80 backdrop-blur-3xl w-full max-w-2xl rounded-[2rem] shadow-[0_16px_64px_rgba(0,0,0,0.2)] dark:shadow-[0_16px_64px_rgba(0,0,0,0.6)] border border-white/60 dark:border-white/20 flex flex-col max-h-[90vh] relative overflow-hidden">
@@ -801,7 +850,7 @@ export default function App() {
                     <h3 className="font-bold text-lg text-slate-900 dark:text-white">AI Copilot</h3>
                   </div>
                   <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed pl-14 font-medium">
-                    Click the <strong className="text-purple-700 dark:text-purple-400">AI</strong> button in the header, type your request, and the copilot will generate code at your cursor. You can also type <code className="px-2 py-1 rounded-lg bg-white/60 dark:bg-black/40 border border-white/50 dark:border-white/10 text-slate-800 dark:text-slate-200 font-mono text-xs shadow-inner">/* @AI Create a fetch request */</code> manually.
+                    Click the <strong className="text-purple-700 dark:text-purple-400">AI</strong> button in the header, type your request, and the copilot will stream code directly to your cursor via serverless functions.
                   </p>
                 </div>
 
