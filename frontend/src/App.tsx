@@ -6,7 +6,7 @@ import { MonacoBinding } from 'y-monaco';
 import {
   Sun, Moon, Terminal, Users, LogOut, ArrowRight, Menu, X,
   Download, HelpCircle, Play, ChevronDown, Loader2,
-  Sparkles, Code2, Zap, BookOpen, User, Send
+  Sparkles, Code2, Zap, BookOpen, User, Send, Share2, Check
 } from 'lucide-react';
 
 // --- Type Declarations ---
@@ -229,6 +229,7 @@ export default function App() {
   
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   // AI Prompt Modal State
   const [showPromptModal, setShowPromptModal] = useState(false);
@@ -245,8 +246,32 @@ export default function App() {
   const [sqlJsReady, setSqlJsReady] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
 
-  // Editor instance ref (for AI insertion)
+  // Editor instance ref
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+
+  // --- Session Persistence & URL Parameter Detection ---
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const roomParam = params.get('room');
+    const savedUser = localStorage.getItem('colacode_username') || '';
+    const savedRoom = localStorage.getItem('colacode_room') || '';
+
+    if (savedUser) setSessionUser(savedUser);
+
+    if (roomParam) {
+      const cleanRoom = roomParam.trim().toLowerCase();
+      setSessionRoom(cleanRoom);
+      if (savedUser) {
+        setActiveRoom(cleanRoom);
+        setActiveUser(savedUser);
+      }
+    } else if (savedRoom && savedUser) {
+      setSessionRoom(savedRoom);
+      setActiveRoom(savedRoom);
+      setActiveUser(savedUser);
+      window.history.replaceState({}, '', `?room=${savedRoom}`);
+    }
+  }, []);
 
   const { ydoc, provider, activeUsers } = useColaCode(activeRoom, activeUser);
 
@@ -285,20 +310,42 @@ export default function App() {
   // Handlers
   const handleJoinSession = (e: React.FormEvent) => {
     e.preventDefault();
-    if (sessionRoom.trim() && sessionUser.trim()) {
-      setActiveRoom(sessionRoom.trim().toLowerCase());
-      setActiveUser(sessionUser.trim());
+    const room = sessionRoom.trim().toLowerCase();
+    const user = sessionUser.trim();
+    if (room && user) {
+      localStorage.setItem('colacode_room', room);
+      localStorage.setItem('colacode_username', user);
+
+      const url = new URL(window.location.href);
+      url.searchParams.set('room', room);
+      window.history.replaceState({}, '', url.toString());
+
+      setActiveRoom(room);
+      setActiveUser(user);
       setShowGuide(true);
     }
   };
 
   const handleLeaveSession = () => {
+    localStorage.removeItem('colacode_room');
+    
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    window.history.replaceState({}, '', url.pathname);
+
     setActiveRoom('');
     setActiveUser('');
     setIsMobileSidebarOpen(false);
     setIsTerminalOpen(false);
     setOutputLogs([]);
     setSqlTableData(null);
+  };
+
+  const handleShareLink = () => {
+    const shareUrl = `${window.location.origin}${window.location.pathname}?room=${activeRoom}`;
+    navigator.clipboard.writeText(shareUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
   };
 
   const handleExportCode = () => {
@@ -327,7 +374,6 @@ export default function App() {
     const currentCode = ydoc.getText('monaco-content').toString();
     const placeholder = `/* [AI Copilot generating code for: '${prompt.slice(0, 20)}...'] */`;
 
-    // 1. Insert temporary placeholder macro into Monaco
     editor.executeEdits('ai-prompt', [{
       range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
       text: placeholder,
@@ -353,7 +399,6 @@ export default function App() {
       const data = await response.json();
       const generatedCode = data.code;
 
-      // 2. Replace placeholder macro with generated code
       const model = editor.getModel();
       if (model) {
         const fullText = model.getValue();
@@ -606,7 +651,16 @@ export default function App() {
           </button>
           <div className="flex flex-col min-w-0 ml-1">
             <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Workspace</span>
-            <span className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[100px] sm:max-w-xs drop-shadow-sm">{activeRoom}</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[90px] sm:max-w-xs drop-shadow-sm">{activeRoom}</span>
+              <button
+                onClick={handleShareLink}
+                className="p-1 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 transition-colors"
+                title="Share Room Link"
+              >
+                {copiedLink ? <Check size={14} className="text-emerald-500" /> : <Share2 size={14} />}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -693,6 +747,10 @@ export default function App() {
                 <option value="python">Python</option>
                 <option value="sql">SQL</option>
               </select>
+              <button onClick={handleShareLink} className="w-full flex items-center gap-2 p-2.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-700 dark:text-blue-400 transition-colors backdrop-blur-md shadow-sm">
+                {copiedLink ? <Check size={18} className="text-emerald-500" /> : <Share2 size={18} />} 
+                <span className="font-bold text-sm">{copiedLink ? 'Link Copied!' : 'Share Room'}</span>
+              </button>
               <button onClick={handleExportCode} className="w-full flex items-center gap-2 p-2.5 rounded-xl bg-white/40 dark:bg-white/5 hover:bg-white/60 dark:hover:bg-white/10 border border-white/50 dark:border-white/10 text-slate-800 dark:text-slate-200 transition-colors backdrop-blur-md shadow-sm">
                 <Download size={18} /> <span className="font-bold text-sm">Download File</span>
               </button>
