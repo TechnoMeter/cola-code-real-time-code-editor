@@ -188,7 +188,7 @@ These trade‑offs are well understood and inform our future roadmap (see below)
 
 ### High‑Level Folder Tree
 
-```t
+```text
 colacode/
 ├── api/
 │   └── generate.py             # Serverless FastAPI AI code generator endpoint
@@ -221,11 +221,11 @@ colacode/
 - **Redis Pub/Sub:** All sync instances subscribe to `doc-update-{room}` channels. When a client sends an update, the server broadcasts it to other clients in the same instance and publishes it to Redis so that other instances receive it.
 - **Protocol Parsing:** The server handles Yjs sync messages (step 1, step 2, update) and awareness messages, all using `lib0` varuint encoding. Malformed packets are caught and dropped without crashing the process.
 
-<comment-tag id="3">#### 2. `backend-ai/src/yjs_client.py` – Headless Yjs Client</comment-tag id="3" text="This header references the old standalone backend-ai WebSocket worker. Since AI generation was migrated to the Vercel serverless function api/generate.py, this heading should be updated to reflect the new serverless endpoint logic." type="suggestion">
-- **Handshake:** Sends a `syncStep1` message with an empty state vector to the sync gateway, then responds to `syncStep2` with its own state. This establishes a real‑time Yjs connection.
-- **Macro Detection:** Scans the document text for the regex `/\*\s*@AI\s+(.*?)\s*\*/` after every incoming update.
-- **Atomic Injection:** When a macro is found, it replaces the macro with a status marker, then asynchronously calls the LangGraph agent. The generated code is inserted as a single CRDT delta, preserving cursor positions for other users.
-- **Error Resilience:** The worker retries connections up to 5 times with exponential backoff. All exceptions are logged and do not crash the main async loop.
+#### 2. `api/generate.py` – Serverless AI Endpoint
+- **Request Context Handling:** Accepts incoming code context and user prompt via HTTP POST requests from the client or proxy middleware.
+- **LangGraph Agent Pipeline:** Orchestrates LLM prompt preparation and invokes Google Gemini (or OpenAI-compatible API) via LangGraph workflows.
+- **Clean Insertion:** Returns structured, clean code snippet suggestions designed for seamless client-side CRDT insertion without interrupting user cursors.
+- **Serverless Resilience:** Executes state-free on Vercel Python runtime, scaling automatically with low latency and zero persistent WebSocket state management.
 
 #### 3. Serverless AI Copilot (LangGraph + Gemini)
 - Triggered directly from the UI header or prompt modal.
@@ -263,14 +263,14 @@ npm install
 npm run dev   # Uses tsx for hot reload
 ```
 
-<comment-tag id="4">### 4. Run the AI Worker (Optional, requires API key)
+### 4. Run the AI Endpoint (Optional, requires API key)
 ```bash
-cd backend-ai
+# From the root repository directory
 python -m venv venv
 source venv/bin/activate   # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn src.main:app --reload
-```</comment-tag id="4" text="Update local development steps to instruct running uvicorn api.generate:app --reload from the root folder, since backend-ai/ has been replaced by api/generate.py and root requirements.txt." type="suggestion">
+uvicorn api.generate:app --reload --port 8000
+```
 
 ### 5. Start the Frontend (React)
 ```bash
@@ -310,7 +310,7 @@ All services are deployed on free tiers of popular platforms. Here’s how to re
 ### Prerequisites
 - GitHub repository (private or public).
 - Accounts on:
-<comment-tag id="2">  - [Render](https://render.com) (for PostgreSQL, sync gateway, AI worker)</comment-tag id="2" text="Update this prerequisite list item because Render is now only hosting the sync gateway (PostgreSQL is hosted on Neon, and AI Copilot is on Vercel). Recommended edit: '- [Render](https://render.com) (for sync gateway)'" type="suggestion">
+  - [Render](https://render.com) (for sync gateway)
   - [Upstash](https://upstash.com) (for Redis)
   - [Netlify](https://netlify.com) or [Vercel](https://vercel.com) (for frontend)
   - [UptimeRobot](https://uptimerobot.com) (optional, to keep services awake)
@@ -365,7 +365,7 @@ All services are deployed on free tiers of popular platforms. Here’s how to re
 
 ### Step 6 – Keep Services Alive (UptimeRobot or GitHub Actions)
 Render free services sleep after 15 minutes of inactivity. To prevent cold starts:
-<comment-tag id="1">- Create **one monitor** in UptimeRobot (or use GitHub Actions) pinging:
+- Create a monitor in UptimeRobot (or use GitHub Actions) pinging:
   - `https://colacode-sync.onrender.com/health`
 - Set interval to **5 minutes**.
 
@@ -387,7 +387,7 @@ Render free services sleep after 15 minutes of inactivity. To prevent cold start
 | `VITE_WS_URL` | Frontend | WebSocket endpoint for the Render sync gateway (`wss://...`). |
 | `VITE_AI_SERVICE_URL` | Frontend (Optional) | Explicit serverless API target (defaults to `/api/generate`). |
 
-<comment-tag id="5">> **Note:** The AI worker uses `SYNC_GATEWAY_URL` to connect to the sync gateway via WebSocket. The frontend uses `VITE_WS_URL` (injected at build time) for the same purpose.</comment-tag id="5" text="This note mentions SYNC_GATEWAY_URL for a WebSocket AI worker, which is obsolete now that AI is invoked via HTTP request to /api/generate. Updating or removing this note will keep the documentation accurate." type="suggestion">
+> **Note:** The frontend communicates with the WebSocket sync gateway using `VITE_WS_URL` and routes AI prompts to `VITE_AI_SERVICE_URL` (or `/api/generate`).
 
 ---
 
