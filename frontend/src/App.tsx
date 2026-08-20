@@ -249,23 +249,26 @@ export default function App() {
   // Editor instance ref
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
-  // --- Session Persistence & URL Parameter Detection ---
+  // --- Session Persistence & URL Parameter Handling ---
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     const savedUser = localStorage.getItem('colacode_username') || '';
     const savedRoom = localStorage.getItem('colacode_room') || '';
+    const isTabSessionActive = sessionStorage.getItem('colacode_active_session') === 'true';
 
     if (savedUser) setSessionUser(savedUser);
 
     if (roomParam) {
       const cleanRoom = roomParam.trim().toLowerCase();
       setSessionRoom(cleanRoom);
-      if (savedUser) {
+
+      // Auto-login ONLY if this specific tab was already in an active session (e.g. Page Refresh)
+      if (isTabSessionActive && savedUser) {
         setActiveRoom(cleanRoom);
         setActiveUser(savedUser);
       }
-    } else if (savedRoom && savedUser) {
+    } else if (savedRoom && savedUser && isTabSessionActive) {
       setSessionRoom(savedRoom);
       setActiveRoom(savedRoom);
       setActiveUser(savedUser);
@@ -315,6 +318,7 @@ export default function App() {
     if (room && user) {
       localStorage.setItem('colacode_room', room);
       localStorage.setItem('colacode_username', user);
+      sessionStorage.setItem('colacode_active_session', 'true');
 
       const url = new URL(window.location.href);
       url.searchParams.set('room', room);
@@ -328,6 +332,7 @@ export default function App() {
 
   const handleLeaveSession = () => {
     localStorage.removeItem('colacode_room');
+    sessionStorage.removeItem('colacode_active_session');
     
     const url = new URL(window.location.href);
     url.searchParams.delete('room');
