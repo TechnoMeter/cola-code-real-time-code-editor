@@ -188,7 +188,7 @@ These trade‑offs are well understood and inform our future roadmap (see below)
 
 ### High‑Level Folder Tree
 
-```t
+```text
 colacode/
 ├── api/
 │   └── generate.py             # Serverless FastAPI AI code generator endpoint
@@ -342,14 +342,14 @@ All services are deployed on free tiers of popular platforms. Here’s how to re
   PG_PORT=5432
   REDIS_URL=rediss://...
   ```
-- Deploy. Get the public URL (e.g., `https://colacode-sync.onrender.com`).
+- Deploy. Get the public URL (e.g., `https://<your-sync-service>.onrender.com`).
 
 ### Step 4 – AI Copilot (Vercel Serverless)
 - Import repository into Vercel, ensuring the root directory is set to the repository root.
 - Add Environment Variables in **Vercel Dashboard** → **Settings** → **Environment Variables**:
   ```env
   LLM_API_KEY=your_gemini_api_key
-  LLM_MODEL=gemini-2.0-flash-lite
+  LLM_MODEL=gemini-3.1-flash-lite
   ```
 
 ### Step 5 – Frontend Proxy Rewriter (Netlify)
@@ -357,7 +357,7 @@ All services are deployed on free tiers of popular platforms. Here’s how to re
 ```toml
 [[redirects]]
   from = "/api/generate"
-  to = "https://cola-code-real-time-code-editor-six.vercel.app/api/generate"
+  to = "https://<your-vercel-app>.vercel.app/api/generate"
   status = 200
   force = true
 ```
@@ -366,7 +366,7 @@ All services are deployed on free tiers of popular platforms. Here’s how to re
 ### Step 6 – Keep Services Alive (UptimeRobot or GitHub Actions)
 Render free services sleep after 15 minutes of inactivity. To prevent cold starts:
 - Create a monitor in UptimeRobot (or use GitHub Actions) pinging:
-  - `https://colacode-sync.onrender.com/health`
+  - `https://<your-sync-service>.onrender.com/health`
 - Set interval to **5 minutes**.
 
 ---
@@ -383,7 +383,7 @@ Render free services sleep after 15 minutes of inactivity. To prevent cold start
 | `PG_PORT` | Sync Gateway | Database port (default 5432). |
 | `REDIS_URL` | Sync Gateway | Upstash Redis connection string (`rediss://...`). |
 | `LLM_API_KEY` | Vercel Function | Google Gemini API key. |
-| `LLM_MODEL` | Vercel Function | Gemini model ID (`gemini-2.0-flash-lite`). |
+| `LLM_MODEL` | Vercel Function | Gemini model ID (`gemini-3.1-flash-lite`). |
 | `VITE_WS_URL` | Frontend | WebSocket endpoint for the Render sync gateway (`wss://...`). |
 | `VITE_AI_SERVICE_URL` | Frontend (Optional) | Explicit serverless API target (defaults to `/api/generate`). |
 
