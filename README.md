@@ -365,9 +365,8 @@ All services are deployed on free tiers of popular platforms. Here’s how to re
 
 ### Step 6 – Keep Services Alive (UptimeRobot or GitHub Actions)
 Render free services sleep after 15 minutes of inactivity. To prevent cold starts:
-<comment-tag id="1">- Create **two monitors** in UptimeRobot (or use GitHub Actions) pinging:
+<comment-tag id="1">- Create **one monitor** in UptimeRobot (or use GitHub Actions) pinging:
   - `https://colacode-sync.onrender.com/health`
-  - `https://colacode-ai.onrender.com/health`</comment-tag id="1" text="You are correct! Since the AI Copilot was moved to Vercel Serverless (/api/generate), there is no colacode-ai service on Render anymore. You only need one UptimeRobot monitor pinging https://colacode-sync.onrender.com/health." type="suggestion">
 - Set interval to **5 minutes**.
 
 ---
