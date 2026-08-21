@@ -1,0 +1,15 @@
+name: Keep Upstash Alive
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # Runs every Sunday at midnight UTC
+  workflow_dispatch: # Enables manual trigger button
+
+jobs:
+  ping-upstash:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Upstash Redis REST API
+        run: |
+          curl -s "${{ secrets.UPSTASH_REDIS_REST_URL }}/ping" \
+            -H "Authorization: Bearer ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}"
