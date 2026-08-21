@@ -641,84 +641,101 @@ export default function App() {
       <AmbientBackground />
 
       {/* Header */}
-      <header className="h-14 flex items-center justify-between px-4 bg-white/50 dark:bg-[#0f172a]/60 backdrop-blur-xl border-b border-white/60 dark:border-white/10 shadow-sm shrink-0 z-20 relative">
-        <div className="absolute top-0 left-0 right-0 h-px bg-white/40 dark:bg-white/5"></div>
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400 shrink-0">
-            <CodeCoreLogo className="w-6 h-6 drop-shadow-sm" />
-            <span className="font-bold tracking-tight drop-shadow-sm text-sm sm:text-base whitespace-nowrap">ColaCode</span>
-          </div>
-          <button
-            onClick={() => setIsMobileSidebarOpen(true)}
-            className="p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 md:hidden text-slate-700 dark:text-slate-300 border border-white/40 dark:border-white/10 transition-colors backdrop-blur-md shrink-0"
-          >
-            <Menu size={20} />
-          </button>
-          <div className="flex flex-col min-w-0 ml-1">
-            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Workspace</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[90px] sm:max-w-xs drop-shadow-sm">{activeRoom}</span>
-              <button
-                onClick={handleShareLink}
-                className="p-1 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 transition-colors"
-                title="Share Room Link"
-              >
-                {copiedLink ? <Check size={14} className="text-emerald-500" /> : <Share2 size={14} />}
-              </button>
-            </div>
-          </div>
-        </div>
+<header className="h-14 flex items-center justify-between px-2.5 sm:px-4 bg-white/50 dark:bg-[#0f172a]/60 backdrop-blur-xl border-b border-white/60 dark:border-white/10 shadow-sm shrink-0 z-20 relative">
+  <div className="absolute top-0 left-0 right-0 h-px bg-white/40 dark:bg-white/5"></div>
 
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="hidden sm:block py-1.5 px-3 rounded-lg bg-white/50 dark:bg-black/30 backdrop-blur-md border border-white/60 dark:border-white/20 text-xs font-bold uppercase tracking-wide focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer text-slate-800 dark:text-slate-200 shadow-inner"
-          >
-            <option value="javascript">JS/Node</option>
-            <option value="typescript">TypeScript</option>
-            <option value="python">Python</option>
-            <option value="sql">SQL</option>
-          </select>
+  {/* Left: Brand Identity + Workspace Pill */}
+  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 shrink">
+    <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400 shrink-0">
+      <CodeCoreLogo className="w-6 h-6 drop-shadow-sm" />
+      <span className="font-bold tracking-tight drop-shadow-sm text-sm sm:text-base text-slate-900 dark:text-white">
+        ColaCode
+      </span>
+    </div>
 
-          {/* AI Button */}
-          <button
-            onClick={() => setShowPromptModal(true)}
-            disabled={isAiGenerating}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/20 dark:bg-purple-500/30 backdrop-blur-md border border-purple-400/30 dark:border-purple-400/20 text-purple-800 dark:text-purple-300 hover:bg-purple-500/30 dark:hover:bg-purple-500/40 font-bold text-sm transition-all shadow-sm disabled:opacity-50"
-            title="AI Copilot"
-          >
-            {isAiGenerating ? <Loader2 size={16} className="animate-spin text-purple-600 dark:text-purple-300" /> : <Sparkles size={16} />}
-            <span className="hidden sm:inline">{isAiGenerating ? 'Generating...' : 'AI'}</span>
-          </button>
+    {/* Truncated Room Badge */}
+    <div className="flex items-center px-2 py-0.5 rounded-full bg-slate-200/60 dark:bg-black/40 border border-slate-300/50 dark:border-white/10 text-[11px] font-mono font-bold text-slate-700 dark:text-slate-300 max-w-[80px] min-[380px]:max-w-[120px] sm:max-w-xs truncate shadow-inner">
+      <span className="truncate">{activeRoom}</span>
+    </div>
+  </div>
 
-          <button
-            onClick={handleExecuteCode}
-            disabled={isExecuting || (language === 'python' && !pyodideReady) || (language === 'sql' && !sqlJsReady)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 dark:bg-emerald-500/30 backdrop-blur-md border border-emerald-400/30 dark:border-emerald-400/20 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/30 dark:hover:bg-emerald-500/40 font-bold text-sm transition-all disabled:opacity-50 shadow-sm"
-          >
-            {isExecuting ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-            <span className="hidden sm:inline">{isExecuting ? 'Running...' : 'Run'}</span>
-          </button>
+  {/* Right: Exposed Color-Coded Actions */}
+  <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+    {/* Language Dropdown (Desktop Only) */}
+    <select
+      value={language}
+      onChange={(e) => setLanguage(e.target.value)}
+      className="hidden sm:block py-1.5 px-2.5 rounded-lg bg-white/50 dark:bg-black/30 backdrop-blur-md border border-white/60 dark:border-white/20 text-xs font-bold uppercase tracking-wide focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer text-slate-800 dark:text-slate-200 shadow-inner"
+    >
+      <option value="javascript">JS/Node</option>
+      <option value="typescript">TypeScript</option>
+      <option value="python">Python</option>
+      <option value="sql">SQL</option>
+    </select>
 
-          <div className="w-px h-6 bg-slate-300/50 dark:bg-white/10 mx-1 hidden sm:block"></div>
+    {/* AI Copilot */}
+    <button
+      onClick={() => setShowPromptModal(true)}
+      disabled={isAiGenerating}
+      className="p-2 sm:px-3 sm:py-1.5 rounded-lg bg-purple-500/20 dark:bg-purple-500/30 backdrop-blur-md border border-purple-400/30 text-purple-800 dark:text-purple-300 hover:bg-purple-500/30 font-bold text-xs transition-all shadow-sm flex items-center justify-center gap-1.5"
+      title="AI Copilot"
+    >
+      {isAiGenerating ? <Loader2 size={16} className="animate-spin text-purple-600 dark:text-purple-300" /> : <Sparkles size={16} />}
+      <span className="hidden sm:inline">{isAiGenerating ? 'Generating...' : 'AI'}</span>
+    </button>
 
-          <div className="flex items-center gap-1">
-            <button onClick={() => setShowGuide(true)} className="p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent hover:border-white/40 dark:hover:border-white/10 text-slate-700 dark:text-slate-300 transition-all backdrop-blur-md" title="Readme / Help">
-              <HelpCircle size={18} />
-            </button>
-            <button onClick={handleExportCode} className="hidden sm:block p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent hover:border-white/40 dark:hover:border-white/10 text-slate-700 dark:text-slate-300 transition-all backdrop-blur-md" title="Download Code">
-              <Download size={18} />
-            </button>
-            <button onClick={() => setTheme(theme === 'vs-dark' ? 'vs-light' : 'vs-dark')} className="p-2 rounded-lg bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent hover:border-white/40 dark:hover:border-white/10 text-slate-700 dark:text-slate-300 transition-all backdrop-blur-md" title="Toggle Theme">
-              {theme === 'vs-dark' ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-            <button onClick={handleLeaveSession} className="hidden sm:flex items-center gap-2 p-2 ml-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-700 dark:text-red-400 transition-all backdrop-blur-md" title="Leave Session">
-              <LogOut size={18} />
-            </button>
-          </div>
-        </div>
-      </header>
+    {/* Run Code */}
+    <button
+      onClick={handleExecuteCode}
+      disabled={isExecuting || (language === 'python' && !pyodideReady) || (language === 'sql' && !sqlJsReady)}
+      className="p-2 sm:px-3 sm:py-1.5 rounded-lg bg-emerald-500/20 dark:bg-emerald-500/30 backdrop-blur-md border border-emerald-400/30 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/30 font-bold text-xs transition-all shadow-sm flex items-center justify-center gap-1.5"
+      title="Run Code"
+    >
+      {isExecuting ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+      <span className="hidden sm:inline">{isExecuting ? 'Running...' : 'Run'}</span>
+    </button>
+
+    {/* Share Room */}
+    <button
+      onClick={handleShareLink}
+      className="p-2 rounded-lg bg-blue-500/15 dark:bg-blue-500/20 border border-blue-400/30 text-blue-700 dark:text-blue-300 hover:bg-blue-500/30 transition-all backdrop-blur-md"
+      title="Share Room Link"
+    >
+      {copiedLink ? <Check size={16} className="text-emerald-500" /> : <Share2 size={16} />}
+    </button>
+
+    {/* Theme Toggle */}
+    <button
+      onClick={() => setTheme(theme === 'vs-dark' ? 'vs-light' : 'vs-dark')}
+      className="p-2 rounded-lg bg-amber-500/15 dark:bg-slate-800/60 border border-amber-400/30 dark:border-white/10 text-amber-700 dark:text-slate-200 hover:bg-amber-500/25 transition-all backdrop-blur-md"
+      title="Toggle Theme"
+    >
+      {theme === 'vs-dark' ? <Sun size={16} /> : <Moon size={16} />}
+    </button>
+
+    {/* Menu Drawer (Secondary Controls) */}
+    <button
+      onClick={() => setIsMobileSidebarOpen(true)}
+      className="p-2 rounded-lg bg-white/40 dark:bg-white/10 hover:bg-white/60 text-slate-700 dark:text-slate-300 md:hidden border border-white/40 dark:border-white/10 transition-colors backdrop-blur-md"
+      title="More Options"
+    >
+      <Menu size={16} />
+    </button>
+
+    {/* Desktop-Only Utilities */}
+    <div className="hidden sm:flex items-center gap-1 pl-1 border-l border-slate-300/40 dark:border-white/10">
+      <button onClick={() => setShowGuide(true)} className="p-2 rounded-lg hover:bg-white/40 dark:hover:bg-white/10 text-slate-700 dark:text-slate-300" title="Help">
+        <HelpCircle size={18} />
+      </button>
+      <button onClick={handleExportCode} className="p-2 rounded-lg hover:bg-white/40 dark:hover:bg-white/10 text-slate-700 dark:text-slate-300" title="Download">
+        <Download size={18} />
+      </button>
+      <button onClick={handleLeaveSession} className="p-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-700 dark:text-red-400" title="Leave">
+        <LogOut size={18} />
+      </button>
+    </div>
+  </div>
+</header>
 
       {/* Main Layout */}
       <div className="flex-1 flex overflow-hidden relative z-10">
